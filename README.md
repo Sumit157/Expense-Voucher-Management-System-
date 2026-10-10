@@ -8,7 +8,7 @@ Digitise ABC Company's expense-voucher workflow so employees can create and subm
 
 ## Recommended stack
 
-- **Frontend:** React + TypeScript + Vite
+- **Frontend:** React 19 + TypeScript + Vite
 - **UI:** Tailwind CSS + shadcn/ui (Radix primitives) + selected React Bits components where they improve the design
 - **Data fetching/forms:** TanStack Query, React Hook Form, Zod
 - **Backend:** Node.js + TypeScript + Express
@@ -18,7 +18,7 @@ Digitise ABC Company's expense-voucher workflow so employees can create and subm
 - **Testing:** Vitest, React Testing Library, Supertest, Playwright
 - **Local development:** locally installed MySQL 8.0+ (Docker Compose optional as a fallback; see `DECISIONS.md` D-014)
 
-## Development (Phase 1 foundation)
+## Development
 
 Prerequisites: Node.js 20+, npm 11+, and MySQL 8.0+ (locally installed per `DECISIONS.md` D-014, or the optional Docker Compose fallback in `docker-compose.yml`).
 
@@ -37,7 +37,7 @@ npm run dev:api                   # Express API only (tsx watch)
 npm run dev:web                   # Vite dev server only
 npm run lint                      # ESLint
 npm run typecheck                 # tsc across workspaces
-npm run test                      # Vitest (API)
+npm run test                      # Vitest (API integration + web component tests)
 npm run build                     # production build of shared, api, web
 npm run format                    # Prettier write
 ```
@@ -45,6 +45,8 @@ npm run format                    # Prettier write
 Health endpoints (API): `GET /healthz` (liveness), `GET /readyz` (MySQL readiness via `SELECT 1`).
 
 Auth endpoints: `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`.
+
+The web app serves the sign-in page (`/login`), a responsive role-aware navigation shell (desktop rail, mobile sheet), and per-role dashboard shells (`/dashboard`) at `http://localhost:5173`.
 
 Development seed users (`npm run db:seed`, password from `SEED_DEFAULT_PASSWORD`):
 
