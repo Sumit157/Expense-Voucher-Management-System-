@@ -8,6 +8,7 @@ const envSchema = z.object({
   APP_ORIGIN: z.string().url('APP_ORIGIN must be a valid URL'),
   API_ORIGIN: z.string().url('API_ORIGIN must be a valid URL'),
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET must be at least 16 characters'),
+  SESSION_TTL_HOURS: z.coerce.number().int().positive().max(720).default(12),
   UPLOAD_DIR: z.string().min(1).default('./uploads'),
   MAX_SIGNATURE_BYTES: z.coerce
     .number()

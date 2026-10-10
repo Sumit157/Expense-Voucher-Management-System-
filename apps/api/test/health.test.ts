@@ -56,4 +56,13 @@ describe('health endpoints', () => {
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe('NOT_FOUND');
   });
+
+  it('maps malformed JSON bodies to 400 instead of 500', async () => {
+    const res = await request(buildApp(okDb))
+      .post('/api/v1/auth/login')
+      .set('Content-Type', 'application/json')
+      .send('{invalid json');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('BAD_REQUEST');
+  });
 });

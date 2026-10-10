@@ -13,7 +13,7 @@ Digitise ABC Company's expense-voucher workflow so employees can create and subm
 - **Data fetching/forms:** TanStack Query, React Hook Form, Zod
 - **Backend:** Node.js + TypeScript + Express
 - **Database:** MySQL 8.0+ with Prisma ORM + migrations
-- **Authentication:** short-lived access JWT in a secure, HttpOnly cookie; refresh/session strategy documented in `SECURITY.md`
+- **Authentication:** opaque server-side sessions in a `HttpOnly; SameSite=Lax` cookie (hashed token stored in the database, revocable on logout; CSRF defence = SameSite + Origin allow-list check — see `DECISIONS.md` D-018)
 - **Uploads:** validated image uploads, private storage, access controlled through the API
 - **Testing:** Vitest, React Testing Library, Supertest, Playwright
 - **Local development:** locally installed MySQL 8.0+ (Docker Compose optional as a fallback; see `DECISIONS.md` D-014)
@@ -25,6 +25,8 @@ Prerequisites: Node.js 20+, npm 11+, and MySQL 8.0+ (locally installed per `DECI
 ```bash
 npm install                       # install all workspaces
 copy .env.example .env            # then edit DATABASE_URL with real credentials
+npm run db:migrate                # create tables (Prisma Migrate)
+npm run db:seed                   # dev-only users (see table below)
 npm run dev                       # API on :3000, web on :5173 (concurrently)
 ```
 
@@ -41,6 +43,19 @@ npm run format                    # Prettier write
 ```
 
 Health endpoints (API): `GET /healthz` (liveness), `GET /readyz` (MySQL readiness via `SELECT 1`).
+
+Auth endpoints: `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`.
+
+Development seed users (`npm run db:seed`, password from `SEED_DEFAULT_PASSWORD`):
+
+| Email              | Role     |
+| ------------------ | -------- |
+| director@abc.test  | DIRECTOR |
+| accounts@abc.test  | ACCOUNTS |
+| employee1@abc.test | EMPLOYEE |
+| employee2@abc.test | EMPLOYEE |
+
+Integration tests run against a separate database named `expense_voucher_test` (override with `TEST_DATABASE_URL`); create it once locally and grant your DB user access, or let CI's MySQL service provide it.
 
 Optional database fallback (host port 3307, never clashes with local 3306): `docker compose up -d mysql`.
 
