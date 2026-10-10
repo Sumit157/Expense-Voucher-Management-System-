@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+docs/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment (never commit real values)
+.env
+.env.*
+!.env.example
+
+# Uploads (private signature storage)
+uploads/
+!uploads/.gitkeep
+
+# Test/coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Vite
+apps/web/.vite/

@@ -1,0 +1,27 @@
+# OPTIONAL fallback only — the primary development database is the local
+# MySQL 8.0.41 service (MYSQL80) per DECISIONS.md D-014.
+# Uses host port 3307 so it never clashes with the local service on 3306.
+# Usage: docker compose up -d mysql
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: evm-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: expense_voucher
+      MYSQL_USER: evoucher
+      MYSQL_PASSWORD: change-me
+      MYSQL_ROOT_PASSWORD: change-root-me
+    ports:
+      - '3307:3306'
+    volumes:
+      - evm-mysql-data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  evm-mysql-data:
