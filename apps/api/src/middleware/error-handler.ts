@@ -11,8 +11,10 @@ interface HttpErrorLike {
   status?: number;
   statusCode?: number;
   expose?: boolean;
+  code?: string;
   message?: string;
   type?: string;
+  details?: { field: string; message: string }[];
 }
 
 function clientErrorCode(status: number): string {
@@ -39,13 +41,17 @@ export function createErrorHandler(logger: Logger): ErrorRequestHandler {
 
     // Framework/body-parser client errors (4xx) are safe to surface.
     if (status !== undefined && status >= 400 && status < 500) {
+      const exposed = maybeHttpError?.expose === true;
       const rawMessage = maybeHttpError?.message;
-      const safeMessage =
-        maybeHttpError?.expose === true && typeof rawMessage === 'string'
-          ? rawMessage
-          : 'Bad request';
+      const safeMessage = exposed && typeof rawMessage === 'string' ? rawMessage : 'Bad request';
+      const code =
+        exposed && typeof maybeHttpError?.code === 'string'
+          ? maybeHttpError.code
+          : clientErrorCode(status);
+      const details =
+        exposed && Array.isArray(maybeHttpError?.details) ? maybeHttpError.details : undefined;
       res.status(status).json({
-        error: { code: clientErrorCode(status), message: safeMessage },
+        error: { code, message: safeMessage, ...(details ? { details } : {}) },
       });
       return;
     }

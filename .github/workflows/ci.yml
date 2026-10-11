@@ -25,6 +25,9 @@ jobs:
           --health-retries=10
     env:
       TEST_DATABASE_URL: mysql://evoucher:evoucher-test@127.0.0.1:3306/expense_voucher_test
+      # Required by the Prisma datasource schema; `migrate deploy` never
+      # creates it, but the env var must exist for schema resolution.
+      SHADOW_DATABASE_URL: mysql://evoucher:evoucher-test@127.0.0.1:3306/expense_voucher_shadow
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

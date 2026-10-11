@@ -1,7 +1,13 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { resolveTestDatabaseUrl } from './test/utils/test-db-url.js';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@evm/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
+    },
+  },
   test: {
     globalSetup: ['./test/global-setup.ts'],
     testTimeout: 30_000,

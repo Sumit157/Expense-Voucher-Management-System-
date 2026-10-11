@@ -15,6 +15,7 @@ export interface AppDeps {
   logger: Logger;
   db: Database;
   authRouter?: Router;
+  vouchersRouter?: Router;
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -41,6 +42,9 @@ export function createApp(deps: AppDeps): Express {
   app.use(createHealthRouter(deps));
   if (deps.authRouter) {
     app.use('/api/v1/auth', deps.authRouter);
+  }
+  if (deps.vouchersRouter) {
+    app.use('/api/v1/vouchers', deps.vouchersRouter);
   }
 
   app.use(notFoundHandler);

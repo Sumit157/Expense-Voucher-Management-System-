@@ -1,4 +1,4 @@
-import { LayoutDashboardIcon, type LucideIcon } from 'lucide-react';
+import { LayoutDashboardIcon, ReceiptTextIcon, type LucideIcon } from 'lucide-react';
 import type { UserRole } from '@/api/types';
 
 export interface NavItem {
@@ -18,6 +18,12 @@ const NAV_ITEMS: readonly NavItem[] = [
     label: 'Dashboard',
     icon: LayoutDashboardIcon,
     roles: ['EMPLOYEE', 'DIRECTOR', 'ACCOUNTS'],
+  },
+  {
+    to: '/vouchers',
+    label: 'My Vouchers',
+    icon: ReceiptTextIcon,
+    roles: ['EMPLOYEE'],
   },
 ];
 

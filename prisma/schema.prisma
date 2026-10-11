@@ -9,6 +9,9 @@ generator client {
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
+  // Explicit so the shadow database is a known, grant-scoped name
+  // (D-021: evoucher holds ALL on expense_voucher% databases).
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 /// Roles are stored as a MySQL ENUM via Prisma's enum mapping (documented in DATABASE.md §1).
@@ -30,7 +33,10 @@ model User {
   createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
 
-  sessions Session[]
+  sessions    Session[]
+  vouchers    Voucher[]        @relation("VoucherEmployee")
+  storedFiles StoredFile[]
+  events      VoucherEvent[]
 
   @@map("users")
 }
@@ -46,4 +52,95 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+/// Workflow states per PLAN.md phases 4-7 / DATABASE.md 2.2.
+enum VoucherStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+model Voucher {
+  id              String        @id @default(uuid()) @db.Char(36)
+  voucherNumber   String        @unique @map("voucher_number") @db.VarChar(32)
+  voucherDate     DateTime      @map("voucher_date") @db.Date
+  expenseDate     DateTime      @map("expense_date") @db.Date
+  department      String        @db.VarChar(120)
+  expenseTitle    String        @map("expense_title") @db.VarChar(200)
+  category        String        @db.VarChar(80)
+  description     String?       @db.Text
+  amount          Decimal       @db.Decimal(12, 2)
+  status          VoucherStatus @default(DRAFT)
+  employeeId      String        @map("employee_id") @db.Char(36)
+  employeeSignatureFileId String? @map("employee_signature_file_id") @db.Char(36)
+  directorSignatureFileId String? @map("director_signature_file_id") @db.Char(36)
+  approvedAt      DateTime?     @map("approved_at") @db.DateTime(3)
+  rejectionReason String?       @map("rejection_reason") @db.Text
+  deletedAt       DateTime?     @map("deleted_at") @db.DateTime(3)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.DateTime(3)
+
+  employee               User        @relation("VoucherEmployee", fields: [employeeId], references: [id], onDelete: Restrict)
+  employeeSignatureFile  StoredFile? @relation("EmployeeSignature", fields: [employeeSignatureFileId], references: [id], onDelete: SetNull)
+  directorSignatureFile  StoredFile? @relation("DirectorSignature", fields: [directorSignatureFileId], references: [id], onDelete: SetNull)
+  events                 VoucherEvent[]
+
+  @@index([employeeId, createdAt])
+  @@index([status, createdAt])
+  @@index([department, status])
+  @@index([expenseDate])
+  @@index([category])
+  @@map("vouchers")
+}
+
+/// Metadata for privately stored signature images (DATABASE.md 2.3).
+/// Bytes live outside any public directory, keyed by a random storage_key.
+model StoredFile {
+  id           String   @id @default(uuid()) @db.Char(36)
+  storageKey   String   @unique @map("storage_key") @db.VarChar(255)
+  originalName String   @map("original_name") @db.VarChar(255)
+  mimeType     String   @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int      @map("size_bytes")
+  sha256       String?  @db.Char(64)
+  uploadedById String   @map("uploaded_by_id") @db.Char(36)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  employeeSignedVouchers Voucher[] @relation("EmployeeSignature")
+  directorSignedVouchers Voucher[] @relation("DirectorSignature")
+
+  @@index([uploadedById])
+  @@map("stored_files")
+}
+
+/// Append-only audit trail (DATABASE.md 2.4). Never updated or deleted.
+model VoucherEvent {
+  id         String   @id @default(uuid()) @db.Char(36)
+  voucherId  String   @map("voucher_id") @db.Char(36)
+  actorId    String   @map("actor_id") @db.Char(36)
+  eventType  String   @map("event_type") @db.VarChar(40)
+  fromStatus String?  @map("from_status") @db.VarChar(24)
+  toStatus   String?  @map("to_status") @db.VarChar(24)
+  reason     String?  @db.Text
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  voucher Voucher @relation(fields: [voucherId], references: [id], onDelete: Restrict)
+  actor   User    @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([voucherId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("voucher_events")
+}
+
+/// Transactional per-year counter for voucher numbers (D-006):
+/// SELECT ... FOR UPDATE inside the create transaction, unique index as backstop.
+model VoucherCounter {
+  year      Int @id
+  nextValue Int @default(1) @map("next_value")
+
+  @@map("voucher_counters")
 }

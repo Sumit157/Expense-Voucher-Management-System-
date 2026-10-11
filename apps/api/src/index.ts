@@ -7,6 +7,9 @@ import { loadEnv } from './env.js';
 import { createLogger } from './logger.js';
 import { getPrisma } from './lib/prisma.js';
 import { createAuthRouter } from './modules/auth/auth-router.js';
+import { createSignatureStorage, resolveUploadDir } from './modules/vouchers/signature-storage.js';
+import { createVoucherService } from './modules/vouchers/voucher-service.js';
+import { createVoucherRouter } from './modules/vouchers/voucher-router.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 loadDotenv({ path: path.join(repoRoot, '.env') });
@@ -16,7 +19,10 @@ const logger = createLogger(env);
 const db = createDatabase(env.DATABASE_URL, logger);
 const prisma = getPrisma();
 const authRouter = createAuthRouter({ env, logger, prisma });
-const app = createApp({ env, logger, db, authRouter });
+const storage = createSignatureStorage(resolveUploadDir(repoRoot, env.UPLOAD_DIR));
+const voucherService = createVoucherService({ prisma, storage });
+const vouchersRouter = createVoucherRouter({ env, logger, prisma, service: voucherService });
+const app = createApp({ env, logger, db, authRouter, vouchersRouter });
 
 const server = app.listen(env.PORT, () => {
   logger.info({ port: env.PORT, origin: env.API_ORIGIN }, 'API listening');

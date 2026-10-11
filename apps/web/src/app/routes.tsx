@@ -4,6 +4,10 @@ import { AppShellLayout } from '@/components/shell/app-shell';
 import { DashboardPage } from '@/pages/dashboard';
 import { LoginPage } from '@/pages/login';
 import { NotFoundPage } from '@/pages/not-found';
+import { VoucherCreatePage } from '@/pages/vouchers/create';
+import { VoucherDetailPage } from '@/pages/vouchers/detail';
+import { VoucherEditPage } from '@/pages/vouchers/edit';
+import { VoucherListPage } from '@/pages/vouchers/list';
 
 export function AppRoutes() {
   return (
@@ -15,6 +19,10 @@ export function AppRoutes() {
         <Route element={<AppShellLayout />}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/vouchers" element={<VoucherListPage />} />
+          <Route path="/vouchers/new" element={<VoucherCreatePage />} />
+          <Route path="/vouchers/:id" element={<VoucherDetailPage />} />
+          <Route path="/vouchers/:id/edit" element={<VoucherEditPage />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFoundPage />} />
