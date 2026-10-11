@@ -41,8 +41,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Scope to this suite's own users: a broad `contains '@evm.test'` wipe
+  // would also kill live sessions of concurrently-running suites (vouchers).
   await prisma.session.deleteMany({
-    where: { user: { email: { contains: '@evm.test' } } },
+    where: { user: { email: { in: [EMPLOYEE_EMAIL, DIRECTOR_EMAIL, ACCOUNTS_EMAIL, INACTIVE_EMAIL] } } },
   });
   await prisma.$disconnect();
 });

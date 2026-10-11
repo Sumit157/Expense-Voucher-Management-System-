@@ -170,6 +170,25 @@ export function createVoucherRouter(deps: VoucherRouterDeps): Router {
   );
 
   router.post(
+    '/:id/submit',
+    employeeOnly,
+    wrap(async (req, res) => {
+      const id = parseId(req.params.id);
+      const dto = await service.submitVoucher(actorOf(req), id);
+      logger.info({ voucherId: id, userId: req.auth?.id }, 'voucher submitted');
+      res.json({ data: dto });
+    }),
+  );
+
+  router.get(
+    '/:id/events',
+    wrap(async (req, res) => {
+      const id = parseId(req.params.id);
+      res.json({ data: await service.listVoucherEvents(actorOf(req), id) });
+    }),
+  );
+
+  router.post(
     '/:id/signature/employee',
     employeeOnly,
     (req, res, next) => {

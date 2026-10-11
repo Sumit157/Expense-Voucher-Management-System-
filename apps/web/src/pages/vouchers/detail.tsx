@@ -4,14 +4,23 @@ import { toast } from 'sonner';
 import {
   AlertCircleIcon,
   ArrowLeftIcon,
+  FilePlusIcon,
+  HistoryIcon,
   PenLineIcon,
   ReceiptTextIcon,
+  SendIcon,
   Trash2Icon,
   UploadIcon,
 } from 'lucide-react';
 import { ApiError } from '@/api/client';
 import { useSession } from '@/auth/use-auth';
-import { useDeleteVoucher, useUploadEmployeeSignature, useVoucher } from '@/api/vouchers';
+import {
+  useDeleteVoucher,
+  useSubmitVoucher,
+  useUploadEmployeeSignature,
+  useVoucher,
+  useVoucherEvents,
+} from '@/api/vouchers';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
 import { StatusBadge } from '@/components/shared/status-badge';
@@ -23,15 +32,37 @@ function signatureUrl(id: string): string {
   return `/api/v1/vouchers/${id}/signatures/employee`;
 }
 
+const EVENT_LABELS: Record<string, string> = {
+  CREATED: 'Draft created',
+  UPDATED_DRAFT: 'Draft updated',
+  SUBMITTED: 'Submitted for approval',
+  DELETED_DRAFT: 'Draft deleted',
+};
+
+const EVENT_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  CREATED: FilePlusIcon,
+  UPDATED_DRAFT: PenLineIcon,
+  SUBMITTED: SendIcon,
+  DELETED_DRAFT: Trash2Icon,
+};
+
+const eventTimestampFormatter = new Intl.DateTimeFormat('en-IN', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
 export function VoucherDetailPage() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const session = useSession();
   const voucher = useVoucher(id);
+  const events = useVoucherEvents(id);
   const deleteVoucher = useDeleteVoucher();
+  const submitVoucher = useSubmitVoucher();
   const upload = useUploadEmployeeSignature();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingSubmit, setConfirmingSubmit] = useState(false);
 
   if (voucher.isPending) {
     return (
@@ -62,6 +93,7 @@ export function VoucherDetailPage() {
   const data = voucher.data;
   const isOwner = session.data?.id === data.employee?.id;
   const canEdit = isOwner && data.status === 'DRAFT';
+  const canSubmit = canEdit && data.hasEmployeeSignature;
 
   const onDelete = () => {
     deleteVoucher
@@ -73,6 +105,25 @@ export function VoucherDetailPage() {
       .catch(() => {
         toast.error('Could not delete the voucher');
         setConfirmingDelete(false);
+      });
+  };
+
+  const onSubmit = () => {
+    submitVoucher
+      .mutateAsync(data.id)
+      .then(() => {
+        toast.success('Voucher submitted for approval');
+        setConfirmingSubmit(false);
+      })
+      .catch((error: unknown) => {
+        setConfirmingSubmit(false);
+        if (error instanceof ApiError && error.code === 'SIGNATURE_REQUIRED') {
+          toast.error('Upload your signature before submitting');
+        } else if (error instanceof ApiError && error.code === 'INVALID_VOUCHER_STATE') {
+          toast.error('This voucher is no longer a draft');
+        } else {
+          toast.error('Could not submit the voucher');
+        }
       });
   };
 
@@ -113,34 +164,49 @@ export function VoucherDetailPage() {
           <div className="flex items-center gap-2">
             <StatusBadge status={data.status} />
             {canEdit ? (
-              <>
-                {confirmingDelete ? (
-                  <>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={deleteVoucher.isPending}
-                      onClick={onDelete}
-                    >
-                      {deleteVoucher.isPending ? 'Deleting…' : 'Yes, delete'}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setConfirmingDelete(false)}>
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button variant="outline" size="sm" asChild>
-                      <Link to={`/vouchers/${data.id}/edit`}>
-                        <PenLineIcon aria-hidden /> Edit
-                      </Link>
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setConfirmingDelete(true)}>
-                      <Trash2Icon aria-hidden /> Delete
-                    </Button>
-                  </>
-                )}
-              </>
+              confirmingSubmit ? (
+                <>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    disabled={submitVoucher.isPending}
+                    onClick={onSubmit}
+                  >
+                    {submitVoucher.isPending ? 'Submitting…' : 'Yes, submit'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmingSubmit(false)}>
+                    Cancel
+                  </Button>
+                </>
+              ) : confirmingDelete ? (
+                <>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleteVoucher.isPending}
+                    onClick={onDelete}
+                  >
+                    {deleteVoucher.isPending ? 'Deleting…' : 'Yes, delete'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmingDelete(false)}>
+                    Cancel
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link to={`/vouchers/${data.id}/edit`}>
+                      <PenLineIcon aria-hidden /> Edit
+                    </Link>
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmingDelete(true)}>
+                    <Trash2Icon aria-hidden /> Delete
+                  </Button>
+                  <Button size="sm" disabled={!canSubmit} onClick={() => setConfirmingSubmit(true)}>
+                    <SendIcon aria-hidden /> Submit
+                  </Button>
+                </>
+              )
             ) : null}
           </div>
         }
@@ -253,9 +319,58 @@ export function VoucherDetailPage() {
       {data.status === 'DRAFT' ? (
         <p className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
           <AlertCircleIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          This draft is saved but not yet submitted. Submission for approval arrives in Phase 5.
+          {canSubmit
+            ? 'Ready to submit. After submission this voucher becomes read-only and enters the approval queue.'
+            : 'This draft is saved but not yet submitted. Upload your signature to enable submission.'}
         </p>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <HistoryIcon aria-hidden className="size-4" /> Activity
+          </CardTitle>
+          <CardDescription>Append-only audit trail of this voucher.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {events.isPending ? (
+            <Skeleton className="h-20 w-full" />
+          ) : events.isError ? (
+            <p className="text-sm text-muted-foreground">Could not load the activity timeline.</p>
+          ) : events.data && events.data.length > 0 ? (
+            <ol className="space-y-3">
+              {events.data.map((event) => {
+                const Icon = EVENT_ICONS[event.eventType] ?? HistoryIcon;
+                return (
+                  <li key={event.id} className="flex items-start gap-3 text-sm">
+                    <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border bg-muted text-muted-foreground [&>svg]:size-3">
+                      <Icon aria-hidden />
+                    </span>
+                    <div className="min-w-0">
+                      <p>
+                        {EVENT_LABELS[event.eventType] ?? event.eventType}
+                        {event.actor ? (
+                          <span className="text-muted-foreground"> — {event.actor.fullName}</span>
+                        ) : null}
+                      </p>
+                      <p className="text-xs tabular-nums text-muted-foreground">
+                        {eventTimestampFormatter.format(new Date(event.createdAt))}
+                      </p>
+                      {event.reason ? (
+                        <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+                          Reason: {event.reason}
+                        </p>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="text-sm text-muted-foreground">No activity yet.</p>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

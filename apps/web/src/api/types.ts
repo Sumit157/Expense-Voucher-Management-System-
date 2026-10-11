@@ -50,6 +50,17 @@ export interface VoucherList {
   total: number;
 }
 
+/** One entry of the append-only voucher timeline (GET /vouchers/:id/events). */
+export interface VoucherEvent {
+  id: string;
+  eventType: string;
+  fromStatus: VoucherStatus | null;
+  toStatus: VoucherStatus | null;
+  reason: string | null;
+  actor: { fullName: string; employeeCode: string | null } | null;
+  createdAt: string;
+}
+
 /** JSON payload accepted by POST /vouchers and PATCH /vouchers/:id. */
 export interface VoucherDraftInput {
   voucherDate: string;

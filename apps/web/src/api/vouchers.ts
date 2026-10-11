@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiRequest, apiUpload } from '@/api/client';
-import type { Voucher, VoucherDraftInput, VoucherList } from '@/api/types';
+import type { Voucher, VoucherDraftInput, VoucherEvent, VoucherList } from '@/api/types';
 
 export const VOUCHERS_QUERY_KEY = ['vouchers'] as const;
 export const voucherQueryKey = (id: string) => ['vouchers', 'detail', id] as const;
 const voucherListQueryKey = ['vouchers', 'list'] as const;
+const voucherEventsQueryKey = (id: string) => ['vouchers', 'events', id] as const;
 
 export function useVoucherList() {
   return useQuery<VoucherList>({
@@ -56,6 +57,27 @@ export function useDeleteVoucher() {
       // entry ages out of the cache naturally; revisiting the URL refetches
       // and the page renders its "not found" state.
       void queryClient.invalidateQueries({ queryKey: voucherListQueryKey });
+    },
+  });
+}
+
+export function useVoucherEvents(id: string) {
+  return useQuery<VoucherEvent[]>({
+    queryKey: voucherEventsQueryKey(id),
+    queryFn: () => apiRequest<VoucherEvent[]>(`/vouchers/${id}/events`),
+    enabled: id.length > 0,
+  });
+}
+
+export function useSubmitVoucher() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiRequest<Voucher>(`/vouchers/${id}/submit`, { method: 'POST' }),
+    onSuccess: (voucher) => {
+      void queryClient.invalidateQueries({ queryKey: voucherListQueryKey });
+      queryClient.setQueryData(voucherQueryKey(voucher.id), voucher);
+      // The SUBMITTED event lands in the same server transaction.
+      void queryClient.invalidateQueries({ queryKey: voucherEventsQueryKey(voucher.id) });
     },
   });
 }

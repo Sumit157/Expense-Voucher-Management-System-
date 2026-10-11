@@ -184,6 +184,21 @@ export interface VoucherServiceDeps {
   storage: SignatureStorage;
 }
 
+export interface VoucherEventActorRef {
+  fullName: string;
+  employeeCode: string | null;
+}
+
+export interface VoucherEventDto {
+  id: string;
+  eventType: string;
+  fromStatus: VoucherStatus | null;
+  toStatus: VoucherStatus | null;
+  reason: string | null;
+  actor: VoucherEventActorRef | null;
+  createdAt: string;
+}
+
 export interface VoucherService {
   createDraft(actor: Actor, input: DraftInput): Promise<VoucherDto>;
   listVouchers(
@@ -193,6 +208,8 @@ export interface VoucherService {
   getVoucher(actor: Actor, id: string): Promise<VoucherDto>;
   updateDraft(actor: Actor, id: string, patch: Partial<DraftInput>): Promise<VoucherDto>;
   deleteDraft(actor: Actor, id: string): Promise<void>;
+  submitVoucher(actor: Actor, id: string): Promise<VoucherDto>;
+  listVoucherEvents(actor: Actor, id: string): Promise<VoucherEventDto[]>;
   attachEmployeeSignature(
     actor: Actor,
     id: string,
@@ -388,6 +405,79 @@ export function createVoucherService(deps: VoucherServiceDeps): VoucherService {
           fromStatus: 'DRAFT',
         });
       });
+    },
+
+    async submitVoucher(actor, id) {
+      const voucher = await loadForActor(prisma, actor, id);
+      if (voucher.employeeId !== actor.id) {
+        // Only the owner submits; readers never mutate.
+        throw new VoucherError(404, 'NOT_FOUND', 'Voucher not found');
+      }
+      if (voucher.status !== 'DRAFT') {
+        throw new VoucherError(
+          409,
+          'INVALID_VOUCHER_STATE',
+          'Only draft vouchers can be submitted',
+        );
+      }
+      if (!voucher.employeeSignatureFileId) {
+        throw new VoucherError(
+          409,
+          'SIGNATURE_REQUIRED',
+          'An employee signature is required before submitting',
+        );
+      }
+      return withTransactionRetry(prisma, async (tx) => {
+        // Conditional transition: a concurrent submit or state change loses
+        // the row-count race and fails with 409 instead of double-submitting.
+        const result = await tx.voucher.updateMany({
+          where: { id, employeeId: actor.id, status: 'DRAFT', deletedAt: null },
+          data: { status: 'PENDING_APPROVAL' },
+        });
+        if (result.count === 0) {
+          throw new VoucherError(
+            409,
+            'INVALID_VOUCHER_STATE',
+            'Only draft vouchers can be submitted',
+          );
+        }
+        const updated = await tx.voucher.findUniqueOrThrow({
+          where: { id },
+          include: { employee: { select: EMPLOYEE_SELECT } },
+        });
+        // Atomic with the transition (DATABASE.md "Submit").
+        await recordEvent(tx, {
+          voucherId: id,
+          actorId: actor.id,
+          eventType: 'SUBMITTED',
+          fromStatus: 'DRAFT',
+          toStatus: 'PENDING_APPROVAL',
+          metadata: { voucherNumber: updated.voucherNumber },
+        });
+        return toVoucherDto(updated);
+      });
+    },
+
+    async listVoucherEvents(actor, id) {
+      const voucher = await loadForActor(prisma, actor, id);
+      const events = await prisma.voucherEvent.findMany({
+        where: { voucherId: voucher.id },
+        include: {
+          actor: { select: { fullName: true, employeeCode: true } },
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        // Timeline is small by design until Phase 8 adds real pagination.
+        take: 200,
+      });
+      return events.map((event) => ({
+        id: event.id,
+        eventType: event.eventType,
+        fromStatus: event.fromStatus as VoucherStatus | null,
+        toStatus: event.toStatus as VoucherStatus | null,
+        reason: event.reason,
+        actor: event.actor,
+        createdAt: event.createdAt.toISOString(),
+      }));
     },
 
     async attachEmployeeSignature(actor, id, file, maxBytes) {

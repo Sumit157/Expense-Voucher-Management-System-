@@ -41,19 +41,36 @@ describe('voucher pages', () => {
     fetchMock.mockReset();
   });
 
-  function mockApi(options: { list?: unknown; detail?: unknown; created?: unknown } = {}) {
+  function mockApi(
+    options: {
+      list?: unknown;
+      detail?: unknown;
+      created?: unknown;
+      events?: unknown;
+      submitted?: unknown;
+    } = {},
+  ) {
     fetchMock.mockImplementation(async (url: RequestInfo | URL, init?: RequestInit) => {
       const href = String(url);
+      const method = init?.method ?? 'GET';
       if (href.includes('/auth/me')) {
         return jsonResponse(200, authBody(testUser));
+      }
+      if (href.includes('/vouchers/v1/submit') && method === 'POST') {
+        return jsonResponse(200, {
+          data: options.submitted ?? { ...voucherFixture, status: 'PENDING_APPROVAL' },
+        });
+      }
+      if (href.includes('/vouchers/v1/events')) {
+        return jsonResponse(200, { data: options.events ?? [] });
       }
       if (href.includes('/vouchers/v1')) {
         return jsonResponse(200, { data: options.detail ?? voucherFixture });
       }
-      if (href.endsWith('/vouchers') && init?.method === 'POST') {
+      if (href.endsWith('/vouchers') && method === 'POST') {
         return jsonResponse(201, { data: options.created ?? voucherFixture });
       }
-      if (href.endsWith('/vouchers') && init?.method === 'DELETE') {
+      if (href.endsWith('/vouchers') && method === 'DELETE') {
         return new Response(null, { status: 204 }) as unknown as Response;
       }
       if (href.endsWith('/vouchers')) {
@@ -162,5 +179,69 @@ describe('voucher pages', () => {
     );
     expect(deleteCalls).toHaveLength(1);
     expect(String(deleteCalls[0]?.[0])).toContain('/vouchers/v1');
+  });
+
+  it('disables submit until an employee signature exists', async () => {
+    mockApi();
+    renderWithProviders(<AppRoutes />, { route: '/vouchers/v1' });
+
+    await screen.findByRole('heading', { level: 1, name: 'EV-2026-000042' });
+    expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
+    expect(screen.getByText(/Upload your signature to enable submission/)).toBeInTheDocument();
+  });
+
+  it('lets the owner submit a signed draft after confirmation', async () => {
+    const signedDraft = { ...voucherFixture, hasEmployeeSignature: true };
+    const pending = { ...signedDraft, status: 'PENDING_APPROVAL' };
+    mockApi({ detail: signedDraft, submitted: pending });
+    const user = userEvent.setup();
+    renderWithProviders(<AppRoutes />, { route: '/vouchers/v1' });
+
+    await screen.findByRole('heading', { level: 1, name: 'EV-2026-000042' });
+    await user.click(screen.getByRole('button', { name: /Submit/ }));
+    await user.click(screen.getByRole('button', { name: 'Yes, submit' }));
+
+    expect(await screen.findByText('Pending approval')).toBeInTheDocument();
+    const submitCalls = fetchMock.mock.calls.filter(
+      (call) =>
+        (call[1] as RequestInit | undefined)?.method === 'POST' &&
+        String(call[0]).includes('/submit'),
+    );
+    expect(submitCalls).toHaveLength(1);
+    expect(String(submitCalls[0]?.[0])).toContain('/vouchers/v1/submit');
+  });
+
+  it('renders the activity timeline with actors', async () => {
+    const events = [
+      {
+        id: 'e1',
+        eventType: 'CREATED',
+        fromStatus: null,
+        toStatus: 'DRAFT',
+        reason: null,
+        actor: { fullName: testUser.fullName, employeeCode: testUser.employeeCode },
+        createdAt: '2026-10-01T10:00:00.000Z',
+      },
+      {
+        id: 'e2',
+        eventType: 'SUBMITTED',
+        fromStatus: 'DRAFT',
+        toStatus: 'PENDING_APPROVAL',
+        reason: null,
+        actor: { fullName: testUser.fullName, employeeCode: testUser.employeeCode },
+        createdAt: '2026-10-01T11:00:00.000Z',
+      },
+    ];
+    mockApi({
+      detail: { ...voucherFixture, status: 'PENDING_APPROVAL' },
+      events,
+    });
+    renderWithProviders(<AppRoutes />, { route: '/vouchers/v1' });
+
+    const items = await screen.findAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent('Draft created');
+    expect(items[0]).toHaveTextContent('Ada Lovelace');
+    expect(items[1]).toHaveTextContent('Submitted for approval');
   });
 });

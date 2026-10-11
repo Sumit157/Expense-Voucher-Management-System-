@@ -464,3 +464,147 @@ describe('POST /api/v1/vouchers/:id/signature/employee', () => {
     expect(notDraft.body.error.code).toBe('INVALID_VOUCHER_STATE');
   });
 });
+
+describe('POST /api/v1/vouchers/:id/submit', () => {
+  async function createSignedDraft(cookie: string): Promise<string> {
+    const created = await createDraft(cookie);
+    const id = created.body.data.id as string;
+    const signed = await request(app)
+      .post(`/api/v1/vouchers/${id}/signature/employee`)
+      .set('Cookie', cookie)
+      .attach('file', PNG_SIGNATURE, 'signature.png');
+    expect(signed.status).toBe(200);
+    return id;
+  }
+
+  it('transitions a signed draft to PENDING_APPROVAL and records SUBMITTED atomically', async () => {
+    const id = await createSignedDraft(emp1Cookie);
+
+    const res = await request(app).post(`/api/v1/vouchers/${id}/submit`).set('Cookie', emp1Cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('PENDING_APPROVAL');
+    expect(res.body.data.hasEmployeeSignature).toBe(true);
+
+    const events = await prisma.voucherEvent.findMany({
+      where: { voucherId: id, eventType: 'SUBMITTED' },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.fromStatus).toBe('DRAFT');
+    expect(events[0]?.toStatus).toBe('PENDING_APPROVAL');
+  });
+
+  it('requires an employee signature (409 SIGNATURE_REQUIRED) and keeps the draft', async () => {
+    const created = await createDraft(emp1Cookie);
+    const id = created.body.data.id as string;
+
+    const res = await request(app).post(`/api/v1/vouchers/${id}/submit`).set('Cookie', emp1Cookie);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('SIGNATURE_REQUIRED');
+
+    const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id } });
+    expect(voucher.status).toBe('DRAFT');
+  });
+
+  it('rejects non-owners with 404 and non-employees with 403', async () => {
+    const id = await createSignedDraft(emp1Cookie);
+
+    const stranger = await request(app)
+      .post(`/api/v1/vouchers/${id}/submit`)
+      .set('Cookie', emp2Cookie);
+    expect(stranger.status).toBe(404);
+
+    const director = await request(app)
+      .post(`/api/v1/vouchers/${id}/submit`)
+      .set('Cookie', directorCookie);
+    expect(director.status).toBe(403);
+
+    const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id } });
+    expect(voucher.status).toBe('DRAFT');
+  });
+
+  it('rejects a duplicate submit with 409 INVALID_VOUCHER_STATE', async () => {
+    const id = await createSignedDraft(emp1Cookie);
+    const first = await request(app)
+      .post(`/api/v1/vouchers/${id}/submit`)
+      .set('Cookie', emp1Cookie);
+    expect(first.status).toBe(200);
+
+    const second = await request(app)
+      .post(`/api/v1/vouchers/${id}/submit`)
+      .set('Cookie', emp1Cookie);
+    expect(second.status).toBe(409);
+    expect(second.body.error.code).toBe('INVALID_VOUCHER_STATE');
+
+    const submitted = await prisma.voucherEvent.count({
+      where: { voucherId: id, eventType: 'SUBMITTED' },
+    });
+    expect(submitted).toBe(1);
+  });
+
+  it('lets exactly one of several concurrent submits win', async () => {
+    const id = await createSignedDraft(emp1Cookie);
+
+    const results = await Promise.all([
+      request(app).post(`/api/v1/vouchers/${id}/submit`).set('Cookie', emp1Cookie),
+      request(app).post(`/api/v1/vouchers/${id}/submit`).set('Cookie', emp1Cookie),
+      request(app).post(`/api/v1/vouchers/${id}/submit`).set('Cookie', emp1Cookie),
+      request(app).post(`/api/v1/vouchers/${id}/submit`).set('Cookie', emp1Cookie),
+      request(app).post(`/api/v1/vouchers/${id}/submit`).set('Cookie', emp1Cookie),
+    ]);
+
+    const ok = results.filter((r) => r.status === 200);
+    const conflicts = results.filter((r) => r.status === 409);
+    expect(ok).toHaveLength(1);
+    expect(conflicts).toHaveLength(4);
+    for (const conflict of conflicts) {
+      expect(conflict.body.error.code).toBe('INVALID_VOUCHER_STATE');
+    }
+
+    const submitted = await prisma.voucherEvent.count({
+      where: { voucherId: id, eventType: 'SUBMITTED' },
+    });
+    expect(submitted).toBe(1);
+  });
+});
+
+describe('GET /api/v1/vouchers/:id/events', () => {
+  it('returns the owner timeline in order and applies visibility rules', async () => {
+    const created = await createDraft(emp1Cookie);
+    const id = created.body.data.id as string;
+    const signed = await request(app)
+      .post(`/api/v1/vouchers/${id}/signature/employee`)
+      .set('Cookie', emp1Cookie)
+      .attach('file', PNG_SIGNATURE, 'signature.png');
+    expect(signed.status).toBe(200);
+    const submitted = await request(app)
+      .post(`/api/v1/vouchers/${id}/submit`)
+      .set('Cookie', emp1Cookie);
+    expect(submitted.status).toBe(200);
+
+    const owner = await request(app).get(`/api/v1/vouchers/${id}/events`).set('Cookie', emp1Cookie);
+    expect(owner.status).toBe(200);
+    const events = owner.body.data as {
+      eventType: string;
+      fromStatus: string | null;
+      toStatus: string | null;
+      actor: { fullName: string } | null;
+    }[];
+    expect(events.map((e) => e.eventType)).toEqual(['CREATED', 'SUBMITTED']);
+    expect(events[1]?.fromStatus).toBe('DRAFT');
+    expect(events[1]?.toStatus).toBe('PENDING_APPROVAL');
+    expect(events[0]?.actor?.fullName).toBe('Voucher Emp One');
+
+    const stranger = await request(app)
+      .get(`/api/v1/vouchers/${id}/events`)
+      .set('Cookie', emp2Cookie);
+    expect(stranger.status).toBe(404);
+
+    const director = await request(app)
+      .get(`/api/v1/vouchers/${id}/events`)
+      .set('Cookie', directorCookie);
+    expect(director.status).toBe(200);
+
+    const anonymous = await request(app).get(`/api/v1/vouchers/${id}/events`);
+    expect(anonymous.status).toBe(401);
+  });
+});
