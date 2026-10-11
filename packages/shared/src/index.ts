@@ -22,3 +22,23 @@ export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 export const VOUCHER_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'] as const;
 
 export type VoucherStatus = (typeof VOUCHER_STATUSES)[number];
+
+/**
+ * Allow-listed sort fields for GET /vouchers (API.md). Both the API validation
+ * and the web sort control build from this list so they cannot drift; unknown
+ * sortBy values are rejected with 400 rather than silently ignored.
+ */
+export const VOUCHER_SORT_FIELDS = [
+  'createdAt',
+  'voucherDate',
+  'expenseDate',
+  'amount',
+  'voucherNumber',
+  'status',
+] as const;
+
+export type VoucherSortField = (typeof VOUCHER_SORT_FIELDS)[number];
+
+export const SORT_ORDERS = ['asc', 'desc'] as const;
+
+export type SortOrder = (typeof SORT_ORDERS)[number];

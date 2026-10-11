@@ -266,6 +266,176 @@ describe('GET /api/v1/dashboard/accounts', () => {
   });
 });
 
+describe('GET /api/v1/dashboard/employee', () => {
+  it('reconciles per-status counts and claimed amount with the fixture data', async () => {
+    const res = await request(app).get('/api/v1/dashboard/employee').set('Cookie', emp1Cookie);
+
+    expect(res.status).toBe(200);
+    const summary = res.body.data;
+    // emp1 fixture: 2 drafts, 1 pending, 1 approved, 1 rejected.
+    expect(summary.total).toBe(5);
+    expect(summary.drafts).toBe(2);
+    expect(summary.pendingApproval).toBe(1);
+    expect(summary.approved).toBe(1);
+    expect(summary.rejected).toBe(1);
+    // D-038: claimed = sum of all own live voucher amounts.
+    expect(summary.totalClaimedAmount).toBe('2500.50');
+  });
+
+  it('scopes totals to the signed-in employee', async () => {
+    const res = await request(app).get('/api/v1/dashboard/employee').set('Cookie', emp2Cookie);
+
+    expect(res.status).toBe(200);
+    // emp2 fixture: 1 pending, 1 approved.
+    expect(res.body.data).toMatchObject({
+      total: 2,
+      drafts: 0,
+      pendingApproval: 1,
+      approved: 1,
+      rejected: 0,
+      totalClaimedAmount: '2500.00',
+    });
+  });
+
+  it('excludes soft-deleted vouchers from every total', async () => {
+    const draft = await prisma.voucher.findFirstOrThrow({
+      where: { voucherNumber: 'EV-DASH-000001' },
+    });
+    await prisma.voucher.update({
+      where: { id: draft.id },
+      data: { deletedAt: new Date('2026-10-06T00:00:00.000Z') },
+    });
+    try {
+      const res = await request(app).get('/api/v1/dashboard/employee').set('Cookie', emp1Cookie);
+      expect(res.status).toBe(200);
+      expect(res.body.data.total).toBe(4);
+      expect(res.body.data.drafts).toBe(1);
+      expect(res.body.data.totalClaimedAmount).toBe('2400.50');
+    } finally {
+      await prisma.voucher.update({ where: { id: draft.id }, data: { deletedAt: null } });
+    }
+  });
+
+  it('is denied to Directors, Accounts and anonymous callers', async () => {
+    const director = await request(app).get('/api/v1/dashboard/employee').set('Cookie', directorCookie);
+    expect(director.status).toBe(403);
+    expect(director.body.error.code).toBe('FORBIDDEN');
+
+    const accounts = await request(app).get('/api/v1/dashboard/employee').set('Cookie', accountsCookie);
+    expect(accounts.status).toBe(403);
+
+    const anonymous = await request(app).get('/api/v1/dashboard/employee');
+    expect(anonymous.status).toBe(401);
+  });
+});
+
+describe('GET /api/v1/dashboard/director', () => {
+  it('reconciles pending count and amount with the fixture data', async () => {
+    const res = await request(app).get('/api/v1/dashboard/director').set('Cookie', directorCookie);
+
+    expect(res.status).toBe(200);
+    const summary = res.body.data;
+    // Fixture pending: emp1 300.00 + emp2 500.00.
+    expect(summary.pendingCount).toBe(2);
+    expect(summary.totalPendingAmount).toBe('800.00');
+  });
+
+  it('counts approvals and rejections that happened today (local day)', async () => {
+    // Fixture approvedAt values are in the past, so they never count as today.
+    const baseline = await request(app).get('/api/v1/dashboard/director').set('Cookie', directorCookie);
+    expect(baseline.body.data.approvedToday).toBe(0);
+    expect(baseline.body.data.rejectedToday).toBe(0);
+
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+
+    const approvedToday = await seedVoucher(emp1Id, {
+      status: 'APPROVED',
+      amount: '50.00',
+      voucherNumber: 'EV-DASH-TODAY-APP',
+      approvedAt: today,
+    });
+    const approvedYesterday = await seedVoucher(emp1Id, {
+      status: 'APPROVED',
+      amount: '60.00',
+      voucherNumber: 'EV-DASH-DAY-BEFORE-APP',
+      approvedAt: yesterday,
+    });
+    const rejectedToday = await seedVoucher(emp1Id, {
+      status: 'REJECTED',
+      amount: '70.00',
+      voucherNumber: 'EV-DASH-TODAY-REJ',
+    });
+    await prisma.voucherEvent.create({
+      data: {
+        voucherId: rejectedToday.id,
+        actorId: emp1Id,
+        eventType: 'REJECTED',
+        fromStatus: 'PENDING_APPROVAL',
+        toStatus: 'REJECTED',
+        reason: 'Dashboard fixture',
+        createdAt: today,
+      },
+    });
+    const rejectedYesterday = await seedVoucher(emp1Id, {
+      status: 'REJECTED',
+      amount: '80.00',
+      voucherNumber: 'EV-DASH-DAY-BEFORE-REJ',
+    });
+    await prisma.voucherEvent.create({
+      data: {
+        voucherId: rejectedYesterday.id,
+        actorId: emp1Id,
+        eventType: 'REJECTED',
+        fromStatus: 'PENDING_APPROVAL',
+        toStatus: 'REJECTED',
+        reason: 'Dashboard fixture',
+        createdAt: yesterday,
+      },
+    });
+
+    try {
+      const res = await request(app).get('/api/v1/dashboard/director').set('Cookie', directorCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.data.approvedToday).toBe(1);
+      expect(res.body.data.rejectedToday).toBe(1);
+    } finally {
+      const ids = [approvedToday.id, approvedYesterday.id, rejectedToday.id, rejectedYesterday.id];
+      await prisma.voucherEvent.deleteMany({ where: { voucherId: { in: ids } } });
+      await prisma.voucher.deleteMany({ where: { id: { in: ids } } });
+    }
+  });
+
+  it('returns the most recently created live vouchers as recent activity', async () => {
+    const res = await request(app).get('/api/v1/dashboard/director').set('Cookie', directorCookie);
+
+    expect(res.status).toBe(200);
+    const recent = res.body.data.recentActivity;
+    expect(recent).toHaveLength(5);
+    // Newest-first; equal timestamps may be tiebroken by id, so only assert
+    // that createdAt never increases as we walk the list.
+    const created: string[] = recent.map((v: { createdAt: string }) => v.createdAt);
+    for (let i = 1; i < created.length; i += 1) {
+      expect(created[i]! <= created[i - 1]!).toBe(true);
+    }
+    expect(
+      recent.every((v: { employee: { fullName: string } }) => v.employee.fullName.length > 0),
+    ).toBe(true);
+  });
+
+  it('is denied to Employees, Accounts and anonymous callers', async () => {
+    const employee = await request(app).get('/api/v1/dashboard/director').set('Cookie', emp1Cookie);
+    expect(employee.status).toBe(403);
+    expect(employee.body.error.code).toBe('FORBIDDEN');
+
+    const accounts = await request(app).get('/api/v1/dashboard/director').set('Cookie', accountsCookie);
+    expect(accounts.status).toBe(403);
+
+    const anonymous = await request(app).get('/api/v1/dashboard/director');
+    expect(anonymous.status).toBe(401);
+  });
+});
+
 describe('Accounts access matrix (AUTH-05/AUTH-06)', () => {
   it('reads every voucher in the organisation, with and without a status filter', async () => {
     const all = await request(app).get('/api/v1/vouchers').set('Cookie', accountsCookie);

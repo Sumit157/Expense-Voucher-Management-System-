@@ -1,24 +1,55 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiRequest, apiUpload } from '@/api/client';
 import type {
+  SortOrder,
   Voucher,
   VoucherDraftInput,
   VoucherEvent,
   VoucherList,
+  VoucherSortField,
   VoucherStatus,
 } from '@/api/types';
 
 export const VOUCHERS_QUERY_KEY = ['vouchers'] as const;
 export const voucherQueryKey = (id: string) => ['vouchers', 'detail', id] as const;
 const voucherListQueryKey = ['vouchers', 'list'] as const;
-const voucherListStatusKey = (status: VoucherStatus | undefined) =>
-  ['vouchers', 'list', status ?? 'ALL'] as const;
 const voucherEventsQueryKey = (id: string) => ['vouchers', 'events', id] as const;
 
-export function useVoucherList(status?: VoucherStatus) {
+/** Filters accepted by GET /vouchers; all fields optional. */
+export interface VoucherListQuery {
+  status?: VoucherStatus;
+  search?: string;
+  department?: string;
+  category?: string;
+  fromDate?: string;
+  toDate?: string;
+  minAmount?: string;
+  maxAmount?: string;
+  sortBy?: VoucherSortField;
+  sortOrder?: SortOrder;
+  page?: number;
+  pageSize?: number;
+}
+
+function buildListQueryString(query: VoucherListQuery): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === '' || value === null) {
+      continue;
+    }
+    params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return qs ? `/vouchers?${qs}` : '/vouchers';
+}
+
+export function useVoucherList(query: VoucherListQuery = {}) {
   return useQuery<VoucherList>({
-    queryKey: voucherListStatusKey(status),
-    queryFn: () => apiRequest<VoucherList>(status ? `/vouchers?status=${status}` : '/vouchers'),
+    queryKey: [...voucherListQueryKey, query],
+    queryFn: () => apiRequest<VoucherList>(buildListQueryString(query)),
+    // Keep the previous page rendered while a new filter combination loads so
+    // the toolbar never unmounts mid-typing (Phase 8).
+    placeholderData: keepPreviousData,
   });
 }
 

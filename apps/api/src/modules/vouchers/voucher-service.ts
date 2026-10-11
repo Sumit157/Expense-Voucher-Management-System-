@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, Voucher, VoucherStatus, UserRole } from '@prisma/client';
-import { EXPENSE_CATEGORIES } from '@evm/shared';
+import { EXPENSE_CATEGORIES, type SortOrder, type VoucherSortField } from '@evm/shared';
 import { sniffImageMime, type SignatureStorage } from './signature-storage.js';
 
 /** Server-side error carrying an API.md stable code. */
@@ -217,12 +217,40 @@ export interface VoucherEventDto {
   createdAt: string;
 }
 
+/** Server-validated list query for GET /vouchers (API.md query parameters). */
+export interface VoucherListFilter {
+  status?: VoucherStatus;
+  /** Matches voucher number or employee full name (case-insensitive contains). */
+  search?: string;
+  /** Exact department match; NULL department never matches a department filter. */
+  department?: string;
+  category?: string;
+  /** Inclusive bounds on voucher_date (D-037). */
+  fromDate?: string;
+  toDate?: string;
+  /** Inclusive decimal-string bounds on amount. */
+  minAmount?: string;
+  maxAmount?: string;
+  sortBy?: VoucherSortField;
+  sortOrder?: SortOrder;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface VoucherListResult {
+  items: VoucherDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export const VOUCHER_SERVICE_DEFAULT_PAGE_SIZE = 20;
+export const VOUCHER_SERVICE_MAX_PAGE_SIZE = 100;
+
 export interface VoucherService {
   createDraft(actor: Actor, input: DraftInput): Promise<VoucherDto>;
-  listVouchers(
-    actor: Actor,
-    filter: { status?: VoucherStatus },
-  ): Promise<{ items: VoucherDto[]; total: number }>;
+  listVouchers(actor: Actor, filter: VoucherListFilter): Promise<VoucherListResult>;
   getVoucher(actor: Actor, id: string): Promise<VoucherDto>;
   updateDraft(actor: Actor, id: string, patch: Partial<DraftInput>): Promise<VoucherDto>;
   deleteDraft(actor: Actor, id: string): Promise<void>;
@@ -347,22 +375,82 @@ export function createVoucherService(deps: VoucherServiceDeps): VoucherService {
     },
 
     async listVouchers(actor, filter) {
+      // D-037: date range filters apply to voucher_date (inclusive bounds).
+      // D-041: department filter is a case-insensitive contains match.
+      const page = Math.max(1, filter.page ?? 1);
+      const pageSize = Math.min(
+        VOUCHER_SERVICE_MAX_PAGE_SIZE,
+        Math.max(1, filter.pageSize ?? VOUCHER_SERVICE_DEFAULT_PAGE_SIZE),
+      );
+
+      const orSearch = filter.search
+        ? [
+            { voucherNumber: { contains: filter.search } },
+            { employee: { fullName: { contains: filter.search } } },
+          ]
+        : undefined;
+
       const where: Prisma.VoucherWhereInput = {
         deletedAt: null,
         ...(actor.role === 'EMPLOYEE' ? { employeeId: actor.id } : {}),
         ...(filter.status ? { status: filter.status } : {}),
+        ...(filter.department ? { department: { contains: filter.department } } : {}),
+        ...(filter.category ? { category: filter.category } : {}),
+        ...(filter.fromDate || filter.toDate
+          ? {
+              voucherDate: {
+                ...(filter.fromDate ? { gte: toDateOnly(filter.fromDate) } : {}),
+                ...(filter.toDate ? { lte: toDateOnly(filter.toDate) } : {}),
+              },
+            }
+          : {}),
+        ...(filter.minAmount || filter.maxAmount
+          ? {
+              amount: {
+                ...(filter.minAmount ? { gte: new Prisma.Decimal(filter.minAmount) } : {}),
+                ...(filter.maxAmount ? { lte: new Prisma.Decimal(filter.maxAmount) } : {}),
+              },
+            }
+          : {}),
+        ...(orSearch ? { OR: orSearch } : {}),
       };
+
+      // Sort fields are allow-listed (VOUCHER_SORT_FIELDS); map to a fixed
+      // Prisma orderBy so no client input reaches the query shape. Append the
+      // unique id as a tiebreaker so offset pagination is stable across pages.
+      const sortField = filter.sortBy ?? 'createdAt';
+      const sortDirection = filter.sortOrder ?? 'desc';
+      const orderByField: Record<VoucherSortField, Prisma.VoucherOrderByWithRelationInput> = {
+        createdAt: { createdAt: sortDirection },
+        voucherDate: { voucherDate: sortDirection },
+        expenseDate: { expenseDate: sortDirection },
+        amount: { amount: sortDirection },
+        voucherNumber: { voucherNumber: sortDirection },
+        status: { status: sortDirection },
+      };
+      const orderBy: Prisma.VoucherOrderByWithRelationInput[] = [
+        orderByField[sortField],
+        { id: 'desc' },
+      ];
+
       const [rows, total] = await Promise.all([
         prisma.voucher.findMany({
           where,
           include: { employee: { select: EMPLOYEE_SELECT } },
-          orderBy: { createdAt: 'desc' },
-          // Hard cap until Phase 8 delivers real pagination.
-          take: 100,
+          orderBy,
+          skip: (page - 1) * pageSize,
+          take: pageSize,
         }),
         prisma.voucher.count({ where }),
       ]);
-      return { items: rows.map(toVoucherDto), total };
+
+      return {
+        items: rows.map(toVoucherDto),
+        total,
+        page,
+        pageSize,
+        totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+      };
     },
 
     async getVoucher(actor, id) {

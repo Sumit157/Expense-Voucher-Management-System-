@@ -1,10 +1,11 @@
 import { AlertCircleIcon, ClipboardCheckIcon, Loader2Icon } from 'lucide-react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { useVoucherList } from '@/api/vouchers';
 import { useSession } from '@/auth/use-auth';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
+import { Pagination } from '@/components/shared/pagination';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,12 +19,21 @@ function formatCurrency(amount: string): string {
 
 export function ApprovalsQueuePage() {
   const session = useSession();
-  const list = useVoucherList('PENDING_APPROVAL');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawPage = Number(searchParams.get('page') ?? '1');
+  const requestedPage = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1;
+  const list = useVoucherList({ status: 'PENDING_APPROVAL', page: requestedPage });
 
   // Client-side guard only (D-025); the API scopes every request server-side.
   if (session.data && session.data.role !== 'DIRECTOR') {
     return <Navigate to="/dashboard" replace />;
   }
+
+  const onPageChange = (nextPage: number) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('page', String(nextPage));
+    setSearchParams(next, { replace: true });
+  };
 
   if (list.isPending) {
     return (
@@ -56,16 +66,16 @@ export function ApprovalsQueuePage() {
     );
   }
 
-  const { items } = list.data;
+  const { items, total, page, pageSize, totalPages } = list.data;
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Pending Approvals"
         description={
-          items.length > 0
-            ? `${items.length} voucher${items.length === 1 ? '' : 's'} awaiting a decision`
-            : undefined
+          total > 0 ? `${total} voucher${total === 1 ? '' : 's'} awaiting a decision` : undefined
         }
       />
 
@@ -128,6 +138,20 @@ export function ApprovalsQueuePage() {
           </CardContent>
         </Card>
       )}
+
+      {total > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground tabular-nums">
+            Showing {rangeStart}–{rangeEnd} of {total}
+          </p>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onPageChange={onPageChange}
+            disabled={list.isFetching}
+          />
+        </div>
+      ) : null}
 
       {list.isFetching ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">

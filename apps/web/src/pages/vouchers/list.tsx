@@ -1,22 +1,23 @@
-import { AlertCircleIcon, Loader2Icon, PlusIcon, ReceiptTextIcon } from 'lucide-react';
+import {
+  AlertCircleIcon,
+  Loader2Icon,
+  PlusIcon,
+  ReceiptTextIcon,
+  RotateCcwIcon,
+  SearchIcon,
+} from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useVoucherList } from '@/api/vouchers';
-import type { VoucherStatus } from '@/api/types';
+import { EXPENSE_CATEGORIES, VOUCHER_SORT_FIELDS, VOUCHER_STATUSES } from '@evm/shared';
+import { useVoucherList, type VoucherListQuery } from '@/api/vouchers';
+import type { VoucherSortField, VoucherStatus } from '@/api/types';
 import { useSession } from '@/auth/use-auth';
+import { Pagination } from '@/components/shared/pagination';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-
-const STATUS_OPTIONS: readonly (VoucherStatus | undefined)[] = [
-  undefined,
-  'DRAFT',
-  'PENDING_APPROVAL',
-  'APPROVED',
-  'REJECTED',
-];
 
 const STATUS_LABELS: Record<string, string> = {
   ALL: 'All statuses',
@@ -25,6 +26,36 @@ const STATUS_LABELS: Record<string, string> = {
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
 };
+
+const SORT_LABELS: Record<VoucherSortField, string> = {
+  createdAt: 'Created',
+  voucherDate: 'Voucher date',
+  expenseDate: 'Expense date',
+  amount: 'Amount',
+  voucherNumber: 'Voucher number',
+  status: 'Status',
+};
+
+function isVoucherStatus(value: string | null): value is VoucherStatus {
+  return value !== null && (VOUCHER_STATUSES as readonly string[]).includes(value);
+}
+
+function isSortField(value: string | null): value is VoucherSortField {
+  return value !== null && (VOUCHER_SORT_FIELDS as readonly string[]).includes(value);
+}
+
+function parsePage(raw: string | null): number {
+  const page = Number(raw ?? '1');
+  return Number.isInteger(page) && page >= 1 ? page : 1;
+}
+
+function parsePageSize(raw: string | null): number | undefined {
+  if (raw === null) {
+    return undefined;
+  }
+  const pageSize = Number(raw);
+  return Number.isInteger(pageSize) && pageSize >= 1 && pageSize <= 100 ? pageSize : undefined;
+}
 
 function formatCurrency(amount: string): string {
   const value = Number(amount);
@@ -38,34 +69,76 @@ export function VoucherListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const isEmployee = session.data?.role === 'EMPLOYEE';
   const isAccounts = session.data?.role === 'ACCOUNTS';
-  const rawStatus = searchParams.get('status');
-  const status =
-    rawStatus === 'DRAFT' ||
-    rawStatus === 'PENDING_APPROVAL' ||
-    rawStatus === 'APPROVED' ||
-    rawStatus === 'REJECTED'
-      ? rawStatus
-      : undefined;
+
   // Approved-voucher focus (Phase 7): Accounts lands on the approved view
   // unless they explicitly pick another filter — including "All statuses".
+  const rawStatus = searchParams.get('status');
+  const status = isVoucherStatus(rawStatus) ? rawStatus : undefined;
   const effectiveStatus = searchParams.has('status')
     ? status
     : isAccounts
       ? 'APPROVED'
       : undefined;
-  const list = useVoucherList(effectiveStatus);
+  const rawSortBy = searchParams.get('sortBy');
+
+  const query: VoucherListQuery = {
+    status: effectiveStatus,
+    search: searchParams.get('search') || undefined,
+    department: searchParams.get('department') || undefined,
+    category: searchParams.get('category') || undefined,
+    fromDate: searchParams.get('fromDate') || undefined,
+    toDate: searchParams.get('toDate') || undefined,
+    minAmount: searchParams.get('minAmount') || undefined,
+    maxAmount: searchParams.get('maxAmount') || undefined,
+    sortBy: isSortField(rawSortBy) ? rawSortBy : undefined,
+    sortOrder: searchParams.get('sortOrder') === 'asc' ? 'asc' : undefined,
+    page: parsePage(searchParams.get('page')),
+    pageSize: parsePageSize(searchParams.get('pageSize')),
+  };
+  const list = useVoucherList(query);
   const title = isEmployee ? 'My Vouchers' : 'All Vouchers';
 
-  const onStatusChange = (value: string) => {
-    const next = new URLSearchParams(searchParams);
-    next.set('status', value);
-    setSearchParams(next, { replace: true });
+  const hasActiveFilters =
+    searchParams.has('search') ||
+    searchParams.has('department') ||
+    searchParams.has('category') ||
+    searchParams.has('fromDate') ||
+    searchParams.has('toDate') ||
+    searchParams.has('minAmount') ||
+    searchParams.has('maxAmount') ||
+    searchParams.has('status');
+
+  /** Set or clear filters; any filter change returns to page 1. */
+  const updateParams = (updates: Record<string, string | undefined>) => {
+    // Functional update: two rapid changes (e.g. sort field then direction)
+    // must not clobber each other through a stale searchParams closure.
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        for (const [key, value] of Object.entries(updates)) {
+          if (value === undefined || value === '') {
+            next.delete(key);
+          } else {
+            next.set(key, value);
+          }
+        }
+        if (!('page' in updates)) {
+          next.delete('page');
+        }
+        return next;
+      },
+      { replace: true },
+    );
   };
+
+  const controlClass =
+    'h-9 w-full rounded-md border bg-background px-2 text-sm aria-invalid:border-destructive';
 
   if (list.isPending) {
     return (
       <div className="space-y-4">
         <PageHeader title={title} />
+        <Skeleton className="h-24 w-full" />
         <div className="space-y-2">
           {Array.from({ length: 3 }, (_, i) => (
             <Skeleton key={i} className="h-14 w-full" />
@@ -93,7 +166,11 @@ export function VoucherListPage() {
     );
   }
 
-  const { items, total } = list.data;
+  const { items, total, page, pageSize, totalPages } = list.data;
+  const sortField = query.sortBy ?? 'createdAt';
+  const sortOrder = query.sortOrder ?? 'desc';
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
 
   return (
     <div className="space-y-4">
@@ -101,46 +178,182 @@ export function VoucherListPage() {
         title={title}
         description={total > 0 ? `${total} voucher${total === 1 ? '' : 's'}` : undefined}
         actions={
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <span className="sr-only sm:not-sr-only">Status</span>
+          isEmployee ? (
+            <Button asChild>
+              <Link to="/vouchers/new">
+                <PlusIcon aria-hidden /> New voucher
+              </Link>
+            </Button>
+          ) : null
+        }
+      />
+
+      <Card>
+        <CardContent className="space-y-3 px-4 py-4">
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+            <label className="space-y-1 text-sm lg:col-span-2">
+              <span className="text-xs font-medium text-muted-foreground">Search</span>
+              <span className="relative block">
+                <SearchIcon
+                  className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <input
+                  type="search"
+                  value={searchParams.get('search') ?? ''}
+                  onChange={(event) => updateParams({ search: event.target.value })}
+                  placeholder="Voucher number or employee name"
+                  className={`${controlClass} pl-8`}
+                  aria-label="Search vouchers"
+                />
+              </span>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Status</span>
               <select
                 value={effectiveStatus ?? 'ALL'}
-                onChange={(event) => onStatusChange(event.target.value)}
-                className="h-9 rounded-md border bg-background px-2 text-sm"
+                onChange={(event) => updateParams({ status: event.target.value })}
+                className={controlClass}
                 aria-label="Filter by status"
               >
-                {STATUS_OPTIONS.map((option) => (
-                  <option key={option ?? 'ALL'} value={option ?? 'ALL'}>
-                    {STATUS_LABELS[option ?? 'ALL']}
+                {VOUCHER_STATUSES.map((option) => (
+                  <option key={option} value={option}>
+                    {STATUS_LABELS[option]}
+                  </option>
+                ))}
+                <option value="ALL">All statuses</option>
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Category</span>
+              <select
+                value={searchParams.get('category') ?? ''}
+                onChange={(event) => updateParams({ category: event.target.value })}
+                className={controlClass}
+                aria-label="Filter by category"
+              >
+                <option value="">All categories</option>
+                {EXPENSE_CATEGORIES.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
                   </option>
                 ))}
               </select>
             </label>
-            {isEmployee ? (
-              <Button asChild>
-                <Link to="/vouchers/new">
-                  <PlusIcon aria-hidden /> New voucher
-                </Link>
-              </Button>
-            ) : null}
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Department</span>
+              <input
+                type="text"
+                value={searchParams.get('department') ?? ''}
+                onChange={(event) => updateParams({ department: event.target.value })}
+                placeholder="Any department"
+                maxLength={120}
+                className={controlClass}
+                aria-label="Filter by department"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Voucher date from</span>
+              <input
+                type="date"
+                value={searchParams.get('fromDate') ?? ''}
+                onChange={(event) => updateParams({ fromDate: event.target.value })}
+                className={controlClass}
+                aria-label="Voucher date from"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Voucher date to</span>
+              <input
+                type="date"
+                value={searchParams.get('toDate') ?? ''}
+                onChange={(event) => updateParams({ toDate: event.target.value })}
+                className={controlClass}
+                aria-label="Voucher date to"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Min amount</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={searchParams.get('minAmount') ?? ''}
+                onChange={(event) => updateParams({ minAmount: event.target.value })}
+                placeholder="0.00"
+                className={controlClass}
+                aria-label="Minimum amount"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Max amount</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={searchParams.get('maxAmount') ?? ''}
+                onChange={(event) => updateParams({ maxAmount: event.target.value })}
+                placeholder="Any"
+                className={controlClass}
+                aria-label="Maximum amount"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Sort by</span>
+              <select
+                value={sortField}
+                onChange={(event) => updateParams({ sortBy: event.target.value })}
+                className={controlClass}
+                aria-label="Sort by"
+              >
+                {VOUCHER_SORT_FIELDS.map((option) => (
+                  <option key={option} value={option}>
+                    {SORT_LABELS[option]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-xs font-medium text-muted-foreground">Sort direction</span>
+              <select
+                value={sortOrder}
+                onChange={(event) => updateParams({ sortOrder: event.target.value })}
+                className={controlClass}
+                aria-label="Sort direction"
+              >
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+              </select>
+            </label>
           </div>
-        }
-      />
+          {hasActiveFilters ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setSearchParams(
+                  () => new URLSearchParams(),
+                  { replace: true },
+                )
+              }
+            >
+              <RotateCcwIcon aria-hidden /> Clear filters
+            </Button>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {items.length === 0 ? (
         <EmptyState
           icon={ReceiptTextIcon}
-          title={effectiveStatus ? 'No vouchers match this filter' : 'No vouchers yet'}
+          title={hasActiveFilters ? 'No vouchers match these filters' : 'No vouchers yet'}
           description={
-            effectiveStatus
-              ? 'Try a different status filter.'
+            hasActiveFilters
+              ? 'Try adjusting or clearing the filters.'
               : isEmployee
                 ? 'Create your first expense draft — you can edit or delete it until you submit it for approval.'
                 : 'Vouchers appear here once employees create them.'
           }
         >
-          {isEmployee && !effectiveStatus ? (
+          {isEmployee && !hasActiveFilters ? (
             <Button asChild>
               <Link to="/vouchers/new">
                 <PlusIcon aria-hidden /> New voucher
@@ -197,6 +410,19 @@ export function VoucherListPage() {
           </CardContent>
         </Card>
       )}
+
+      {total > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground tabular-nums">
+            Showing {rangeStart}–{rangeEnd} of {total}
+          </p>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onPageChange={(nextPage) => updateParams({ page: String(nextPage) })}
+          />
+        </div>
+      ) : null}
 
       {list.isFetching ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">

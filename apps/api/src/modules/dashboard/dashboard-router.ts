@@ -31,6 +31,8 @@ export function createDashboardRouter(deps: DashboardRouterDeps): Router {
   const router = Router();
   const requireAuth = createRequireAuth(prisma);
   const accountsOnly = requireRole('ACCOUNTS');
+  const employeeOnly = requireRole('EMPLOYEE');
+  const directorOnly = requireRole('DIRECTOR');
 
   router.use(requireAuth);
 
@@ -39,6 +41,22 @@ export function createDashboardRouter(deps: DashboardRouterDeps): Router {
     accountsOnly,
     wrap(async (req, res) => {
       res.json({ data: await service.getAccountsDashboard(actorOf(req)) });
+    }),
+  );
+
+  router.get(
+    '/employee',
+    employeeOnly,
+    wrap(async (req, res) => {
+      res.json({ data: await service.getEmployeeDashboard(actorOf(req)) });
+    }),
+  );
+
+  router.get(
+    '/director',
+    directorOnly,
+    wrap(async (req, res) => {
+      res.json({ data: await service.getDirectorDashboard(actorOf(req)) });
     }),
   );
 

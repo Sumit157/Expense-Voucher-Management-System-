@@ -1,7 +1,13 @@
 import { screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from '@/app/routes';
-import type { AccountsDashboard, AuthUser, Voucher } from '@/api/types';
+import type {
+  AccountsDashboard,
+  AuthUser,
+  DirectorDashboard,
+  EmployeeDashboard,
+  Voucher,
+} from '@/api/types';
 import { authBody, testUser } from '../../test/fixtures';
 import { jsonResponse, renderWithProviders } from '../../test/test-utils';
 
@@ -13,6 +19,16 @@ const accountsUser: AuthUser = {
   employeeCode: null,
   department: 'Finance',
   role: 'ACCOUNTS',
+};
+
+const directorUser: AuthUser = {
+  ...testUser,
+  id: 'user-dir',
+  email: 'dir@abc.test',
+  fullName: 'Dana Director',
+  employeeCode: null,
+  department: null,
+  role: 'DIRECTOR',
 };
 
 const approvedVoucher: Voucher = {
@@ -120,5 +136,150 @@ describe('accounts dashboard', () => {
 
     expect(await screen.findByText('Could not load the dashboard summary.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+});
+
+describe('employee dashboard', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    fetchMock.mockReset();
+  });
+
+  const employeeSummary: EmployeeDashboard = {
+    total: 6,
+    drafts: 2,
+    pendingApproval: 1,
+    approved: 2,
+    rejected: 1,
+    totalClaimedAmount: '227.75',
+  };
+
+  function mockDashboard(overrides: Partial<EmployeeDashboard> = {}) {
+    fetchMock.mockImplementation(async (url: RequestInfo | URL) => {
+      const href = String(url);
+      if (href.includes('/auth/me')) {
+        return jsonResponse(200, authBody(testUser));
+      }
+      if (href.includes('/dashboard/employee')) {
+        return jsonResponse(200, { data: { ...employeeSummary, ...overrides } });
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    });
+  }
+
+  it('shows per-status counts and the claimed amount', async () => {
+    mockDashboard();
+    renderWithProviders(<AppRoutes />, { route: '/dashboard' });
+
+    expect(await screen.findByText('Your dashboard, Ada')).toBeInTheDocument();
+    expect(await screen.findByText('Total claimed amount')).toBeInTheDocument();
+    expect(screen.getByText('227.75')).toBeInTheDocument();
+    expect(screen.getByText('Drafts')).toBeInTheDocument();
+    expect(screen.getByText('Pending approval')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /New voucher/ })).toHaveAttribute(
+      'href',
+      '/vouchers/new',
+    );
+  });
+
+  it('surfaces a retryable error state when the summary fails to load', async () => {
+    fetchMock.mockImplementation(async (url: RequestInfo | URL) => {
+      const href = String(url);
+      if (href.includes('/auth/me')) {
+        return jsonResponse(200, authBody(testUser));
+      }
+      if (href.includes('/dashboard/employee')) {
+        return jsonResponse(500, {
+          error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    });
+    renderWithProviders(<AppRoutes />, { route: '/dashboard' });
+
+    expect(await screen.findByText('Could not load the dashboard summary.')).toBeInTheDocument();
+  });
+});
+
+describe('director dashboard', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    fetchMock.mockReset();
+  });
+
+  const directorSummary: DirectorDashboard = {
+    pendingCount: 3,
+    approvedToday: 2,
+    rejectedToday: 1,
+    totalPendingAmount: '450.00',
+    recentActivity: [
+      {
+        ...approvedVoucher,
+        id: 'v-recent',
+        voucherNumber: 'EV-2026-000012',
+        status: 'PENDING_APPROVAL',
+        approvedAt: null,
+      },
+    ],
+  };
+
+  function mockDashboard(overrides: Partial<DirectorDashboard> = {}) {
+    fetchMock.mockImplementation(async (url: RequestInfo | URL) => {
+      const href = String(url);
+      if (href.includes('/auth/me')) {
+        return jsonResponse(200, authBody(directorUser));
+      }
+      if (href.includes('/dashboard/director')) {
+        return jsonResponse(200, { data: { ...directorSummary, ...overrides } });
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    });
+  }
+
+  it('shows pending, today counts, pending amount and recent activity', async () => {
+    mockDashboard();
+    renderWithProviders(<AppRoutes />, { route: '/dashboard' });
+
+    expect(await screen.findByText('Review dashboard, Dana')).toBeInTheDocument();
+    expect(await screen.findByText('Pending approvals')).toBeInTheDocument();
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByText('Approved today')).toBeInTheDocument();
+    expect(screen.getByText('Rejected today')).toBeInTheDocument();
+    expect(screen.getByText('450.00')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'EV-2026-000012' })).toHaveAttribute(
+      'href',
+      '/vouchers/v-recent',
+    );
+    expect(screen.getByRole('link', { name: 'Open queue' })).toHaveAttribute('href', '/approvals');
+  });
+
+  it('surfaces a retryable error state when the summary fails to load', async () => {
+    fetchMock.mockImplementation(async (url: RequestInfo | URL) => {
+      const href = String(url);
+      if (href.includes('/auth/me')) {
+        return jsonResponse(200, authBody(directorUser));
+      }
+      if (href.includes('/dashboard/director')) {
+        return jsonResponse(500, {
+          error: { code: 'INTERNAL_ERROR', message: 'Something went wrong' },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${href}`);
+    });
+    renderWithProviders(<AppRoutes />, { route: '/dashboard' });
+
+    expect(await screen.findByText('Could not load the dashboard summary.')).toBeInTheDocument();
   });
 });

@@ -87,11 +87,16 @@ model Voucher {
   directorSignatureFile  StoredFile? @relation("DirectorSignature", fields: [directorSignatureFileId], references: [id], onDelete: SetNull)
   events                 VoucherEvent[]
 
+  // Phase 8 (D-042): standalone createdAt/voucherDate/amount indexes back the
+  // allow-listed sort fields and range filters of GET /vouchers.
   @@index([employeeId, createdAt])
   @@index([status, createdAt])
   @@index([department, status])
   @@index([expenseDate])
   @@index([category])
+  @@index([createdAt])
+  @@index([voucherDate])
+  @@index([amount])
   @@map("vouchers")
 }
 
@@ -131,8 +136,11 @@ model VoucherEvent {
   voucher Voucher @relation(fields: [voucherId], references: [id], onDelete: Restrict)
   actor   User    @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
+  // D-040: the (eventType, createdAt) index backs the Director dashboard's
+  // rejected-today count over REJECTED events.
   @@index([voucherId, createdAt])
   @@index([actorId, createdAt])
+  @@index([eventType, createdAt])
   @@map("voucher_events")
 }
 

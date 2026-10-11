@@ -1,4 +1,4 @@
-import type { VoucherStatus } from '@evm/shared';
+import type { SortOrder, VoucherSortField, VoucherStatus } from '@evm/shared';
 
 export type UserRole = 'EMPLOYEE' | 'DIRECTOR' | 'ACCOUNTS';
 
@@ -16,7 +16,7 @@ export interface LoginCredentials {
   password: string;
 }
 
-export type { VoucherStatus };
+export type { SortOrder, VoucherSortField, VoucherStatus };
 
 export interface VoucherEmployee {
   id: string;
@@ -49,6 +49,9 @@ export interface Voucher {
 export interface VoucherList {
   items: Voucher[];
   total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 /** Server DTO for GET /dashboard/accounts (mirrors AccountsDashboardDto). */
@@ -59,6 +62,25 @@ export interface AccountsDashboard {
   rejected: number;
   totalApprovedAmount: string;
   recentApproved: Voucher[];
+}
+
+/** Server DTO for GET /dashboard/employee (mirrors EmployeeDashboardDto). */
+export interface EmployeeDashboard {
+  total: number;
+  drafts: number;
+  pendingApproval: number;
+  approved: number;
+  rejected: number;
+  totalClaimedAmount: string;
+}
+
+/** Server DTO for GET /dashboard/director (mirrors DirectorDashboardDto). */
+export interface DirectorDashboard {
+  pendingCount: number;
+  approvedToday: number;
+  rejectedToday: number;
+  totalPendingAmount: string;
+  recentActivity: Voucher[];
 }
 
 /** One entry of the append-only voucher timeline (GET /vouchers/:id/events). */

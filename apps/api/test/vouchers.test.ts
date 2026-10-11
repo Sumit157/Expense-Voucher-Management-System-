@@ -191,6 +191,187 @@ describe('GET /api/v1/vouchers (list)', () => {
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
+
+  it('paginates with stable metadata and an id tiebreaker', async () => {
+    // Three drafts for emp1 on top of whatever earlier tests left behind.
+    for (let i = 1; i <= 3; i += 1) {
+      await createDraft(emp1Cookie, { expenseTitle: `Pagination fixture ${i}` });
+    }
+    const all = await request(app)
+      .get('/api/v1/vouchers?pageSize=100&sortBy=createdAt&sortOrder=desc')
+      .set('Cookie', emp1Cookie);
+    const allIds: string[] = all.body.data.items.map((v: { id: string }) => v.id);
+    expect(allIds.length).toBeGreaterThan(3);
+
+    const page1 = await request(app)
+      .get('/api/v1/vouchers?page=1&pageSize=2')
+      .set('Cookie', emp1Cookie);
+    const page2 = await request(app)
+      .get('/api/v1/vouchers?page=2&pageSize=2')
+      .set('Cookie', emp1Cookie);
+    expect(page1.body.data).toMatchObject({ page: 1, pageSize: 2 });
+    expect(page1.body.data.total).toBe(all.body.data.total);
+    expect(page1.body.data.totalPages).toBe(Math.ceil(all.body.data.total / 2));
+    expect(page1.body.data.items).toHaveLength(2);
+
+    // No overlap between pages and the order matches the unpaginated list.
+    const p1Ids: string[] = page1.body.data.items.map((v: { id: string }) => v.id);
+    const p2Ids: string[] = page2.body.data.items.map((v: { id: string }) => v.id);
+    expect(p1Ids.some((id) => p2Ids.includes(id))).toBe(false);
+    expect([...p1Ids, ...p2Ids].slice(0, p1Ids.length)).toEqual(p1Ids);
+    expect(allIds.slice(0, 4)).toEqual([...p1Ids, ...p2Ids]);
+
+    // Out-of-range page returns an empty page, not an error.
+    const beyond = await request(app)
+      .get(`/api/v1/vouchers?page=${page1.body.data.totalPages + 5}&pageSize=2`)
+      .set('Cookie', emp1Cookie);
+    expect(beyond.status).toBe(200);
+    expect(beyond.body.data.items).toHaveLength(0);
+  });
+
+  it('searches by voucher number and employee name', async () => {
+    const created = await createDraft(emp1Cookie, { expenseTitle: 'Searchable fixture' });
+    const voucherNumber: string = created.body.data.voucherNumber;
+
+    const byNumber = await request(app)
+      .get(`/api/v1/vouchers?search=${voucherNumber}`)
+      .set('Cookie', directorCookie);
+    expect(byNumber.status).toBe(200);
+    expect(byNumber.body.data.total).toBe(1);
+    expect(byNumber.body.data.items[0].id).toBe(created.body.data.id);
+
+    const byName = await request(app)
+      .get('/api/v1/vouchers?search=Voucher%20Emp%20One')
+      .set('Cookie', directorCookie);
+    expect(byName.status).toBe(200);
+    expect(byName.body.data.total).toBeGreaterThan(0);
+    expect(
+      byName.body.data.items.every(
+        (v: { employee: { fullName: string } }) => v.employee.fullName === 'Voucher Emp One',
+      ),
+    ).toBe(true);
+
+    // Employee search is still scoped to their own vouchers.
+    const scoped = await request(app)
+      .get('/api/v1/vouchers?search=Voucher%20Emp%20Two')
+      .set('Cookie', emp1Cookie);
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.data.total).toBe(0);
+  });
+
+  it('combines status, department, category, date and amount filters', async () => {
+    const combined = await createDraft(emp1Cookie, {
+      voucherDate: '2026-09-15',
+      expenseDate: '2026-09-14',
+      department: 'Marketing',
+      category: 'Meals',
+      expenseTitle: 'Combined filter fixture',
+      amount: '42.50',
+    });
+    expect(combined.status).toBe(201);
+
+    const res = await request(app)
+      .get(
+        '/api/v1/vouchers?status=DRAFT&department=Marketing&category=Meals&fromDate=2026-09-01&toDate=2026-09-30&minAmount=40&maxAmount=50',
+      )
+      .set('Cookie', emp1Cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.data.total).toBe(1);
+    expect(res.body.data.items[0].id).toBe(combined.body.data.id);
+
+    // Narrowing the amount band below the fixture excludes it again.
+    const excluded = await request(app)
+      .get(
+        '/api/v1/vouchers?status=DRAFT&department=Marketing&category=Meals&minAmount=43&maxAmount=50',
+      )
+      .set('Cookie', emp1Cookie);
+    expect(excluded.body.data.total).toBe(0);
+  });
+
+  it('applies inclusive date-range bounds on voucher date', async () => {
+    const dated = await createDraft(emp1Cookie, {
+      voucherDate: '2026-08-15',
+      expenseTitle: 'Date bounds fixture',
+    });
+    expect(dated.status).toBe(201);
+
+    const onBoundary = await request(app)
+      .get('/api/v1/vouchers?fromDate=2026-08-15&toDate=2026-08-15')
+      .set('Cookie', emp1Cookie);
+    expect(onBoundary.status).toBe(200);
+    expect(onBoundary.body.data.items.some((v: { id: string }) => v.id === dated.body.data.id)).toBe(
+      true,
+    );
+
+    const before = await request(app)
+      .get('/api/v1/vouchers?fromDate=2026-08-16')
+      .set('Cookie', emp1Cookie);
+    expect(
+      before.body.data.items.some((v: { id: string }) => v.id === dated.body.data.id),
+    ).toBe(false);
+  });
+
+  it('sorts by allow-listed fields and rejects unknown sort fields', async () => {
+    await createDraft(emp1Cookie, { expenseTitle: 'Sort low', amount: '10.00' });
+    await createDraft(emp1Cookie, { expenseTitle: 'Sort high', amount: '9999.00' });
+
+    const asc = await request(app)
+      .get('/api/v1/vouchers?sortBy=amount&sortOrder=asc&pageSize=100')
+      .set('Cookie', emp1Cookie);
+    expect(asc.status).toBe(200);
+    const amounts: number[] = asc.body.data.items.map((v: { amount: string }) => Number(v.amount));
+    expect(amounts.length).toBeGreaterThan(1);
+    expect([...amounts].sort((a, b) => a - b)).toEqual(amounts);
+
+    const desc = await request(app)
+      .get('/api/v1/vouchers?sortBy=amount&sortOrder=desc&pageSize=100')
+      .set('Cookie', emp1Cookie);
+    expect(desc.status).toBe(200);
+    const descAmounts: number[] = desc.body.data.items.map((v: { amount: string }) =>
+      Number(v.amount),
+    );
+    expect([...descAmounts].sort((a, b) => b - a)).toEqual(descAmounts);
+
+    const byNumber = await request(app)
+      .get('/api/v1/vouchers?sortBy=voucherNumber&sortOrder=asc&pageSize=100')
+      .set('Cookie', emp1Cookie);
+    expect(byNumber.status).toBe(200);
+    const numbers: string[] = byNumber.body.data.items.map((v: { voucherNumber: string }) => v.voucherNumber);
+    expect([...numbers].sort()).toEqual(numbers);
+
+    const unknown = await request(app)
+      .get('/api/v1/vouchers?sortBy=employee.name')
+      .set('Cookie', emp1Cookie);
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error.code).toBe('VALIDATION_ERROR');
+
+    const badOrder = await request(app)
+      .get('/api/v1/vouchers?sortOrder=sideways')
+      .set('Cookie', emp1Cookie);
+    expect(badOrder.status).toBe(400);
+  });
+
+  it('validates pagination, date and amount query parameters', async () => {
+    const cases = [
+      '/api/v1/vouchers?page=0',
+      '/api/v1/vouchers?page=-1',
+      '/api/v1/vouchers?page=1.5',
+      '/api/v1/vouchers?pageSize=0',
+      '/api/v1/vouchers?pageSize=101',
+      '/api/v1/vouchers?fromDate=2026-13-40',
+      '/api/v1/vouchers?toDate=not-a-date',
+      '/api/v1/vouchers?fromDate=2026-09-30&toDate=2026-09-01',
+      '/api/v1/vouchers?minAmount=-5',
+      '/api/v1/vouchers?minAmount=abc',
+      '/api/v1/vouchers?minAmount=50&maxAmount=10',
+      '/api/v1/vouchers?category=Unobtainium',
+    ];
+    for (const url of cases) {
+      const res = await request(app).get(url).set('Cookie', emp1Cookie);
+      expect(res.status, url).toBe(400);
+      expect(res.body.error.code, url).toBe('VALIDATION_ERROR');
+    }
+  });
 });
 
 describe('GET /api/v1/vouchers/:id (detail)', () => {

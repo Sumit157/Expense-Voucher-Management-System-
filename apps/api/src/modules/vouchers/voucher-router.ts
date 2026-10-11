@@ -1,15 +1,18 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
+import { SORT_ORDERS, VOUCHER_SORT_FIELDS } from '@evm/shared';
 import type { PrismaClient, VoucherStatus } from '@prisma/client';
 import type { Env } from '../../env.js';
 import type { Logger } from '../../logger.js';
 import { createRequireAuth, requireRole } from '../auth/guards.js';
 import {
+  VOUCHER_SERVICE_MAX_PAGE_SIZE,
   VoucherError,
   isSupportedCategory,
   type Actor,
   type DraftInput,
+  type VoucherListFilter,
   type VoucherService,
 } from './voucher-service.js';
 
@@ -54,9 +57,53 @@ const updateDraftSchema = z
   .partial()
   .refine((value) => Object.keys(value).length > 0, 'at least one field is required');
 
-const listQuerySchema = z.object({
-  status: z.enum(['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED']).optional(),
-});
+const listQuerySchema = z
+  .object({
+    status: z.enum(['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED']).optional(),
+    search: z
+      .string()
+      .trim()
+      .max(200)
+      .optional()
+      .transform((value) => (value === '' ? undefined : value)),
+    department: z
+      .string()
+      .trim()
+      .max(120)
+      .optional()
+      .transform((value) => (value === '' ? undefined : value)),
+    category: z
+      .string()
+      .optional()
+      .refine(
+        (value) => value === undefined || isSupportedCategory(value),
+        'is not a supported expense category',
+      ),
+    fromDate: dateSchema.optional(),
+    toDate: dateSchema.optional(),
+    minAmount: amountSchema.optional(),
+    maxAmount: amountSchema.optional(),
+    sortBy: z.enum(VOUCHER_SORT_FIELDS).optional(),
+    sortOrder: z.enum(SORT_ORDERS).optional(),
+    page: z.coerce.number().int().min(1).optional(),
+    pageSize: z.coerce.number().int().min(1).max(VOUCHER_SERVICE_MAX_PAGE_SIZE).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.fromDate && value.toDate && value.fromDate > value.toDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['fromDate'],
+        message: 'must be on or before toDate',
+      });
+    }
+    if (value.minAmount && value.maxAmount && Number(value.minAmount) > Number(value.maxAmount)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['minAmount'],
+        message: 'must not exceed maxAmount',
+      });
+    }
+  });
 
 // Emptiness is checked in the service so the stable code
 // REJECTION_REASON_REQUIRED (API.md) is returned, not a generic zod error.
@@ -157,10 +204,21 @@ export function createVoucherRouter(deps: VoucherRouterDeps): Router {
       if (!parsed.success) {
         throw validationError(parsed.error.issues, 'Invalid query parameters');
       }
-      const { items, total } = await service.listVouchers(actorOf(req), {
+      const filter: VoucherListFilter = {
         status: parsed.data.status as VoucherStatus | undefined,
-      });
-      res.json({ data: { items, total } });
+        search: parsed.data.search,
+        department: parsed.data.department,
+        category: parsed.data.category,
+        fromDate: parsed.data.fromDate,
+        toDate: parsed.data.toDate,
+        minAmount: parsed.data.minAmount,
+        maxAmount: parsed.data.maxAmount,
+        sortBy: parsed.data.sortBy,
+        sortOrder: parsed.data.sortOrder,
+        page: parsed.data.page,
+        pageSize: parsed.data.pageSize,
+      };
+      res.json({ data: await service.listVouchers(actorOf(req), filter) });
     }),
   );
 

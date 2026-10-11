@@ -119,7 +119,13 @@ describe('voucher pages', () => {
       }
       if (href.includes('/vouchers')) {
         return jsonResponse(200, {
-          data: options.list ?? { items: [voucherFixture], total: 1 },
+          data: options.list ?? {
+            items: [voucherFixture],
+            total: 1,
+            page: 1,
+            pageSize: 20,
+            totalPages: 1,
+          },
         });
       }
       throw new Error(`Unexpected fetch: ${href}`);
@@ -137,10 +143,53 @@ describe('voucher pages', () => {
     expect(within(screen.getByRole('table')).getByText('Draft')).toBeInTheDocument();
     expect(screen.getByText('1,500.50')).toBeInTheDocument();
     expect(screen.getByText('1 voucher')).toBeInTheDocument();
+    expect(screen.getByText('Showing 1–1 of 1')).toBeInTheDocument();
+  });
+
+  it('applies search and status filters as URL-driven query parameters', async () => {
+    mockApi({ list: { items: [], total: 0, page: 1, pageSize: 20, totalPages: 0 } });
+    const user = userEvent.setup();
+    renderWithProviders(<AppRoutes />, { route: '/vouchers' });
+
+    await screen.findByLabelText('Search vouchers');
+    await user.type(screen.getByLabelText('Search vouchers'), 'EV-2026');
+
+    await vi.waitFor(() => {
+      const searchCall = fetchMock.mock.calls.find((call) =>
+        String(call[0]).includes('search=EV-2026'),
+      );
+      expect(searchCall).toBeDefined();
+    });
+
+    await user.selectOptions(screen.getByLabelText('Filter by status'), 'APPROVED');
+    await vi.waitFor(() => {
+      const combined = fetchMock.mock.calls.find(
+        (call) =>
+          String(call[0]).includes('search=EV-2026') && String(call[0]).includes('status=APPROVED'),
+      );
+      expect(combined).toBeDefined();
+    });
+  });
+
+  it('paginates the list through the query string', async () => {
+    mockApi({
+      list: { items: [voucherFixture], total: 45, page: 2, pageSize: 20, totalPages: 3 },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<AppRoutes />, { route: '/vouchers' });
+
+    expect(await screen.findByText('Showing 21–40 of 45')).toBeInTheDocument();
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await vi.waitFor(() => {
+      const pageCall = fetchMock.mock.calls.find((call) => String(call[0]).includes('page=3'));
+      expect(pageCall).toBeDefined();
+    });
   });
 
   it('shows the empty state when there are no vouchers', async () => {
-    mockApi({ list: { items: [], total: 0 } });
+    mockApi({ list: { items: [], total: 0, page: 1, pageSize: 20, totalPages: 0 } });
     renderWithProviders(<AppRoutes />, { route: '/vouchers' });
 
     expect(await screen.findByText('No vouchers yet')).toBeInTheDocument();
@@ -369,7 +418,10 @@ describe('voucher pages', () => {
       status: 'PENDING_APPROVAL',
       employee: { ...voucherFixture.employee, fullName: 'Grace Employee' },
     };
-    mockApi({ user: directorUser, list: { items: [pending], total: 1 } });
+    mockApi({
+      user: directorUser,
+      list: { items: [pending], total: 1, page: 1, pageSize: 20, totalPages: 1 },
+    });
     renderWithProviders(<AppRoutes />, { route: '/approvals' });
 
     expect(
@@ -386,7 +438,13 @@ describe('voucher pages', () => {
   it("defaults the accounts list to the approved-voucher filter", async () => {
     mockApi({
       user: accountsUser,
-      list: { items: [{ ...voucherFixture, status: 'APPROVED' }], total: 1 },
+      list: {
+        items: [{ ...voucherFixture, status: 'APPROVED' }],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+        totalPages: 1,
+      },
     });
     renderWithProviders(<AppRoutes />, { route: '/vouchers' });
 
