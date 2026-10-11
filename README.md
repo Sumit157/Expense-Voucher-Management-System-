@@ -472,7 +472,3 @@ Do not treat local Compose defaults as a production deployment without addressin
 4. Run lint, type-check, tests and build checks.
 5. Never commit secrets, production data, database dumps or real signature images.
 6. Report which checks were actually executed and any remaining limitations.
-
-## License
-
-No licence is currently declared. Unless an explicit licence is added, the default copyright restrictions apply. Add a licence file if you intend to permit reuse or redistribution.
