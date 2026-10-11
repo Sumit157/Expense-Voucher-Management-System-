@@ -34,11 +34,28 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
 
   sessions    Session[]
+  resetTokens PasswordResetToken[]
   vouchers    Voucher[]        @relation("VoucherEmployee")
   storedFiles StoredFile[]
   events      VoucherEvent[]
 
   @@map("users")
+}
+
+/// Single-use password-reset tokens (hashed at rest, 1-hour TTL).
+/// Raw tokens are only ever returned to non-production callers (D-044).
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Char(36)
+  userId    String    @map("user_id") @db.Char(36)
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.DateTime(3)
+  usedAt    DateTime? @map("used_at") @db.DateTime(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model Session {

@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiRequest } from '@/api/client';
-import type { AuthUser, LoginCredentials } from '@/api/types';
+import type {
+  AuthUser,
+  ForgotPasswordInput,
+  ForgotPasswordResponse,
+  LoginCredentials,
+  RegisterInput,
+  ResetPasswordInput,
+} from '@/api/types';
 
 export const SESSION_QUERY_KEY = ['auth', 'session'] as const;
 
@@ -32,6 +39,34 @@ export function useLogin() {
     onSuccess: (user) => {
       queryClient.setQueryData(SESSION_QUERY_KEY, user);
     },
+  });
+}
+
+export function useRegister() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RegisterInput) =>
+      apiRequest<AuthUser>('/auth/register', { method: 'POST', body: input }),
+    onSuccess: (user) => {
+      queryClient.setQueryData(SESSION_QUERY_KEY, user);
+    },
+  });
+}
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (input: ForgotPasswordInput) =>
+      apiRequest<ForgotPasswordResponse>('/auth/forgot-password', {
+        method: 'POST',
+        body: input,
+      }),
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (input: ResetPasswordInput) =>
+      apiRequest<void>('/auth/reset-password', { method: 'POST', body: input }),
   });
 }
 

@@ -14,6 +14,30 @@ export interface AuthUser {
 export interface LoginCredentials {
   email: string;
   password: string;
+  rememberMe?: boolean;
+}
+
+/** Public self-registration always creates an Employee (server-enforced). */
+export interface RegisterInput {
+  fullName: string;
+  email: string;
+  password: string;
+  department?: string;
+}
+
+export interface ForgotPasswordInput {
+  email: string;
+}
+
+/** `devResetToken` is only present outside production (D-044). */
+export interface ForgotPasswordResponse {
+  message: string;
+  devResetToken?: string;
+}
+
+export interface ResetPasswordInput {
+  token: string;
+  newPassword: string;
 }
 
 export type { SortOrder, VoucherSortField, VoucherStatus };

@@ -99,4 +99,62 @@ describe('login page', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Account menu' })).toBeInTheDocument();
   });
+
+  it('toggles password visibility accessibly', async () => {
+    mockAuth();
+    const user = userEvent.setup();
+    renderWithProviders(<AppRoutes />, { route: '/login' });
+
+    await screen.findByRole('button', { name: 'Sign in' });
+    const password = screen.getByLabelText('Password');
+    expect(password).toHaveAttribute('type', 'password');
+
+    await user.click(screen.getByRole('button', { name: 'Show password' }));
+    expect(password).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide password' }));
+    expect(password).toHaveAttribute('type', 'password');
+  });
+
+  it('sends rememberMe when the checkbox is ticked', async () => {
+    mockAuth();
+    const user = userEvent.setup();
+    renderWithProviders(<AppRoutes />, { route: '/login' });
+
+    await screen.findByRole('button', { name: 'Sign in' });
+    await user.type(screen.getByLabelText('Email'), 'ada@abc.test');
+    await user.type(screen.getByLabelText('Password'), 'SeedDevPassword123!');
+    await user.click(screen.getByLabelText('Remember me'));
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    const call = loginCalls()[0];
+    const body = JSON.parse(String((call as [unknown, { body: string }])[1]?.body));
+    expect(body.rememberMe).toBe(true);
+  });
+
+  it('links to signup and forgot-password', async () => {
+    mockAuth();
+    renderWithProviders(<AppRoutes />, { route: '/login' });
+
+    await screen.findByRole('button', { name: 'Sign in' });
+    expect(screen.getByRole('link', { name: 'Create an account' })).toHaveAttribute(
+      'href',
+      '/signup',
+    );
+    expect(screen.getByRole('link', { name: 'Forgot password?' })).toHaveAttribute(
+      'href',
+      '/forgot-password',
+    );
+  });
+
+  it('renders the branded layout with the logo mark', async () => {
+    mockAuth();
+    const { container } = renderWithProviders(<AppRoutes />, { route: '/login' });
+
+    await screen.findByRole('button', { name: 'Sign in' });
+    expect(screen.getByRole('heading', { level: 1, name: 'Welcome back' })).toBeInTheDocument();
+    expect(container.querySelector('img[src="/logo-mark.svg"]')).not.toBeNull();
+    expect(screen.getByText('Simplify Expense Management')).toBeInTheDocument();
+  });
 });

@@ -3,7 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Expense Vouchers</title>
+    <script>
+      // Apply the persisted theme before first paint to avoid a flash (D-047).
+      (function () {
+        try {
+          var stored = localStorage.getItem('evm-theme') || 'system';
+          var dark =
+            stored === 'dark' ||
+            (stored === 'system' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* localStorage unavailable — keep the light default */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -13,12 +13,12 @@ import { cn } from '@/lib/utils';
 function Brand() {
   return (
     <span className="flex items-center gap-2.5">
-      <span
+      <img
+        src="/logo-mark.svg"
+        alt=""
         aria-hidden
-        className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground"
-      >
-        EV
-      </span>
+        className="size-8 shrink-0 rounded-lg shadow-[0_1px_2px_rgba(16,44,39,0.1)]"
+      />
       <span className="text-sm font-semibold tracking-tight text-foreground">Expense Vouchers</span>
     </span>
   );

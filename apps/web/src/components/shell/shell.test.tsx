@@ -38,7 +38,7 @@ describe('sign out', () => {
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(await screen.findByRole('menuitem', { name: /sign out/i }));
 
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/auth/logout'))).toBe(
       true,
     );

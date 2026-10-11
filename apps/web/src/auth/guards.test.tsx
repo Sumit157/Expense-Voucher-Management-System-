@@ -23,7 +23,7 @@ describe('route guards', () => {
 
     renderWithProviders(<AppRoutes />, { route: '/dashboard' });
 
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Welcome back' })).toBeInTheDocument();
   });
 
   it('renders the authenticated dashboard with role-aware shell', async () => {
