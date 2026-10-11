@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { GuestOnly, RequireAuth } from '@/auth/guards';
 import { AppShellLayout } from '@/components/shell/app-shell';
+import { ApprovalsQueuePage } from '@/pages/approvals';
 import { DashboardPage } from '@/pages/dashboard';
 import { LoginPage } from '@/pages/login';
 import { NotFoundPage } from '@/pages/not-found';
@@ -23,6 +24,7 @@ export function AppRoutes() {
           <Route path="/vouchers/new" element={<VoucherCreatePage />} />
           <Route path="/vouchers/:id" element={<VoucherDetailPage />} />
           <Route path="/vouchers/:id/edit" element={<VoucherEditPage />} />
+          <Route path="/approvals" element={<ApprovalsQueuePage />} />
         </Route>
       </Route>
       <Route path="*" element={<NotFoundPage />} />

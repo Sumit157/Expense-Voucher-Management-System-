@@ -58,6 +58,12 @@ const listQuerySchema = z.object({
   status: z.enum(['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED']).optional(),
 });
 
+// Emptiness is checked in the service so the stable code
+// REJECTION_REASON_REQUIRED (API.md) is returned, not a generic zod error.
+const rejectSchema = z.object({
+  reason: z.string().max(5000),
+});
+
 function validationError(
   issues: { path: (string | number)[]; message: string }[],
   message: string,
@@ -103,11 +109,31 @@ export function createVoucherRouter(deps: VoucherRouterDeps): Router {
   const router = Router();
   const requireAuth = createRequireAuth(prisma);
   const employeeOnly = requireRole('EMPLOYEE');
+  const directorOnly = requireRole('DIRECTOR');
 
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: env.MAX_SIGNATURE_BYTES, files: 1 },
   });
+
+  /** Multipart validation errors → stable API.md codes. */
+  const uploadSignature: RequestHandler = (req, res, next) => {
+    upload.single('file')(req, res, (error: unknown) => {
+      if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+        res.status(413).json({
+          error: { code: 'FILE_TOO_LARGE', message: 'Signature image exceeds the size limit' },
+        });
+        return;
+      }
+      if (error instanceof multer.MulterError) {
+        res.status(400).json({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid file upload' },
+        });
+        return;
+      }
+      next(error);
+    });
+  };
 
   router.use(requireAuth);
 
@@ -188,26 +214,61 @@ export function createVoucherRouter(deps: VoucherRouterDeps): Router {
     }),
   );
 
+  // D-017: multipart approve — signature validation and transition in one request.
+  router.post(
+    '/:id/approve',
+    directorOnly,
+    uploadSignature,
+    wrap(async (req, res) => {
+      const id = parseId(req.params.id);
+      const file = req.file;
+      if (!file) {
+        throw validationError([{ path: ['file'], message: 'is required' }], 'File is required');
+      }
+      const dto = await service.approveVoucher(
+        actorOf(req),
+        id,
+        { buffer: file.buffer, originalName: file.originalname },
+        env.MAX_SIGNATURE_BYTES,
+      );
+      logger.info({ voucherId: id, userId: req.auth?.id }, 'voucher approved');
+      res.json({ data: dto });
+    }),
+  );
+
+  router.post(
+    '/:id/reject',
+    directorOnly,
+    wrap(async (req, res) => {
+      const id = parseId(req.params.id);
+      const parsed = rejectSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw validationError(parsed.error.issues, 'Invalid rejection');
+      }
+      const dto = await service.rejectVoucher(actorOf(req), id, parsed.data.reason);
+      logger.info({ voucherId: id, userId: req.auth?.id }, 'voucher rejected');
+      res.json({ data: dto });
+    }),
+  );
+
+  router.get(
+    '/:id/signatures/director',
+    wrap(async (req, res) => {
+      const id = parseId(req.params.id);
+      const { buffer, mimeType } = await service.readDirectorSignature(actorOf(req), id);
+      res.set({
+        'Content-Type': mimeType,
+        'Content-Length': String(buffer.length),
+        'Cache-Control': 'private, no-store',
+      });
+      res.end(buffer);
+    }),
+  );
+
   router.post(
     '/:id/signature/employee',
     employeeOnly,
-    (req, res, next) => {
-      upload.single('file')(req, res, (error: unknown) => {
-        if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-          res.status(413).json({
-            error: { code: 'FILE_TOO_LARGE', message: 'Signature image exceeds the size limit' },
-          });
-          return;
-        }
-        if (error instanceof multer.MulterError) {
-          res.status(400).json({
-            error: { code: 'VALIDATION_ERROR', message: 'Invalid file upload' },
-          });
-          return;
-        }
-        next(error);
-      });
-    },
+    uploadSignature,
     wrap(async (req, res) => {
       const id = parseId(req.params.id);
       const file = req.file;

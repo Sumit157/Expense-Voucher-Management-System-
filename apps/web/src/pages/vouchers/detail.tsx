@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import {
   AlertCircleIcon,
   ArrowLeftIcon,
+  CheckIcon,
   FilePlusIcon,
   HistoryIcon,
   PenLineIcon,
@@ -11,11 +12,14 @@ import {
   SendIcon,
   Trash2Icon,
   UploadIcon,
+  XIcon,
 } from 'lucide-react';
 import { ApiError } from '@/api/client';
 import { useSession } from '@/auth/use-auth';
 import {
+  useApproveVoucher,
   useDeleteVoucher,
+  useRejectVoucher,
   useSubmitVoucher,
   useUploadEmployeeSignature,
   useVoucher,
@@ -28,6 +32,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
+function directorSignatureUrl(id: string): string {
+  return `/api/v1/vouchers/${id}/signatures/director`;
+}
+
 function signatureUrl(id: string): string {
   return `/api/v1/vouchers/${id}/signatures/employee`;
 }
@@ -36,6 +44,8 @@ const EVENT_LABELS: Record<string, string> = {
   CREATED: 'Draft created',
   UPDATED_DRAFT: 'Draft updated',
   SUBMITTED: 'Submitted for approval',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
   DELETED_DRAFT: 'Draft deleted',
 };
 
@@ -43,6 +53,8 @@ const EVENT_ICONS: Record<string, React.ComponentType<{ className?: string }>> =
   CREATED: FilePlusIcon,
   UPDATED_DRAFT: PenLineIcon,
   SUBMITTED: SendIcon,
+  APPROVED: CheckIcon,
+  REJECTED: XIcon,
   DELETED_DRAFT: Trash2Icon,
 };
 
@@ -60,9 +72,16 @@ export function VoucherDetailPage() {
   const deleteVoucher = useDeleteVoucher();
   const submitVoucher = useSubmitVoucher();
   const upload = useUploadEmployeeSignature();
+  const approve = useApproveVoucher();
+  const reject = useRejectVoucher();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const directorFileInputRef = useRef<HTMLInputElement>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [confirmingSubmit, setConfirmingSubmit] = useState(false);
+  const [directorFile, setDirectorFile] = useState<File | null>(null);
+  const [confirmingApprove, setConfirmingApprove] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [confirmingReject, setConfirmingReject] = useState(false);
 
   if (voucher.isPending) {
     return (
@@ -94,6 +113,8 @@ export function VoucherDetailPage() {
   const isOwner = session.data?.id === data.employee?.id;
   const canEdit = isOwner && data.status === 'DRAFT';
   const canSubmit = canEdit && data.hasEmployeeSignature;
+  const isDirector = session.data?.role === 'DIRECTOR';
+  const canDecide = isDirector && data.status === 'PENDING_APPROVAL';
 
   const onDelete = () => {
     deleteVoucher
@@ -127,6 +148,60 @@ export function VoucherDetailPage() {
       });
   };
 
+  const onDirectorFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) {
+      setDirectorFile(file);
+      setConfirmingApprove(false);
+    }
+  };
+
+  const onApprove = () => {
+    if (!directorFile) {
+      return;
+    }
+    approve
+      .mutateAsync({ id: data.id, file: directorFile })
+      .then(() => {
+        toast.success('Voucher approved');
+        setDirectorFile(null);
+        setConfirmingApprove(false);
+      })
+      .catch((error: unknown) => {
+        setConfirmingApprove(false);
+        if (error instanceof ApiError && error.code === 'FILE_TOO_LARGE') {
+          toast.error('Signature must be 2 MB or smaller');
+        } else if (error instanceof ApiError && error.code === 'UNSUPPORTED_FILE_TYPE') {
+          toast.error('Signature must be a PNG, JPEG or WebP image');
+        } else if (error instanceof ApiError && error.code === 'INVALID_VOUCHER_STATE') {
+          toast.error('This voucher is no longer pending');
+        } else {
+          toast.error('Could not approve the voucher');
+        }
+      });
+  };
+
+  const onReject = () => {
+    reject
+      .mutateAsync({ id: data.id, reason: rejectReason })
+      .then(() => {
+        toast.success('Voucher rejected');
+        setRejectReason('');
+        setConfirmingReject(false);
+      })
+      .catch((error: unknown) => {
+        setConfirmingReject(false);
+        if (error instanceof ApiError && error.code === 'REJECTION_REASON_REQUIRED') {
+          toast.error('Enter a rejection reason');
+        } else if (error instanceof ApiError && error.code === 'INVALID_VOUCHER_STATE') {
+          toast.error('This voucher is no longer pending');
+        } else {
+          toast.error('Could not reject the voucher');
+        }
+      });
+  };
+
   const onFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -152,7 +227,8 @@ export function VoucherDetailPage() {
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" asChild>
           <Link to="/vouchers">
-            <ArrowLeftIcon aria-hidden /> My vouchers
+            <ArrowLeftIcon aria-hidden />{' '}
+            {session.data?.role === 'EMPLOYEE' ? 'My vouchers' : 'All vouchers'}
           </Link>
         </Button>
       </div>
@@ -211,6 +287,128 @@ export function VoucherDetailPage() {
           </div>
         }
       />
+
+      {data.status === 'REJECTED' && data.rejectionReason ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
+          <p className="text-sm font-medium text-destructive">Rejected</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm">{data.rejectionReason}</p>
+        </div>
+      ) : null}
+
+      {canDecide ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Your decision</CardTitle>
+            <CardDescription>
+              Approving stores your signature and approves the voucher; rejection requires a reason
+              shown to the employee.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Approve with signature
+              </p>
+              {data.hasDirectorSignature ? (
+                <img
+                  src={directorSignatureUrl(data.id)}
+                  alt="Director signature"
+                  className="max-h-32 rounded-md border bg-background p-2"
+                />
+              ) : null}
+              <input
+                ref={directorFileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={onDirectorFileSelected}
+                aria-label="Director signature image file"
+              />
+              {confirmingApprove ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={approve.isPending || !directorFile}
+                    onClick={onApprove}
+                  >
+                    {approve.isPending ? 'Approving…' : 'Yes, approve'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmingApprove(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => directorFileInputRef.current?.click()}
+                  >
+                    <UploadIcon aria-hidden />
+                    {directorFile ? 'Change signature' : 'Choose signature'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={!directorFile}
+                    onClick={() => setConfirmingApprove(true)}
+                  >
+                    Approve voucher
+                  </Button>
+                  {directorFile ? (
+                    <span className="text-xs text-muted-foreground">{directorFile.name}</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      PNG, JPEG or WebP — up to 2 MB.
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <label
+                htmlFor="reject-reason"
+                className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                Reject with reason
+              </label>
+              <textarea
+                id="reject-reason"
+                value={rejectReason}
+                onChange={(event) => setRejectReason(event.target.value)}
+                rows={3}
+                maxLength={5000}
+                placeholder="Explain why this voucher is rejected — the employee sees this reason."
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              />
+              {confirmingReject ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={reject.isPending || rejectReason.trim().length === 0}
+                    onClick={onReject}
+                  >
+                    {reject.isPending ? 'Rejecting…' : 'Yes, reject'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setConfirmingReject(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={rejectReason.trim().length === 0}
+                  onClick={() => setConfirmingReject(true)}
+                >
+                  <XIcon aria-hidden /> Reject voucher
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -315,6 +513,24 @@ export function VoucherDetailPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {data.hasDirectorSignature ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Director signature</CardTitle>
+            <CardDescription>
+              Stored privately and only visible to authorized users.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <img
+              src={directorSignatureUrl(data.id)}
+              alt="Director signature"
+              className="max-h-32 rounded-md border bg-background p-2"
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {data.status === 'DRAFT' ? (
         <p className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">

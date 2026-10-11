@@ -38,6 +38,7 @@ export interface Voucher {
   amount: string;
   status: VoucherStatus;
   hasEmployeeSignature: boolean;
+  hasDirectorSignature: boolean;
   approvedAt: string | null;
   rejectionReason: string | null;
   employee: VoucherEmployee | null;

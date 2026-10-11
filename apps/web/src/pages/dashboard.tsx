@@ -1,8 +1,13 @@
-import { FilePenLineIcon, InboxIcon, WalletIcon } from 'lucide-react';
+import { FilePenLineIcon, InboxIcon, Loader2Icon, WalletIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { UserRole } from '@/api/types';
+import { useVoucherList } from '@/api/vouchers';
 import { useSession } from '@/auth/use-auth';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ROLE_LABELS } from '@/lib/roles';
 
 interface RoleContent {
@@ -17,15 +22,13 @@ const ROLE_CONTENT: Record<UserRole, RoleContent> = {
     heading: 'Your dashboard',
     summary: 'Track and submit your expense vouchers.',
     emptyTitle: 'No vouchers yet',
-    emptyDescription:
-      'Drafting and submitting expense vouchers arrives in Phase 4. Your vouchers will appear here.',
+    emptyDescription: 'Create your first expense draft under My Vouchers.',
   },
   DIRECTOR: {
     heading: 'Review dashboard',
-    summary: 'Approve, return, or reject submitted expense vouchers.',
+    summary: 'Approve or reject submitted expense vouchers.',
     emptyTitle: 'Nothing to review yet',
-    emptyDescription:
-      'The director approval queue arrives in Phase 5, with reporting dashboards in Phase 6.',
+    emptyDescription: 'Submitted vouchers appear in your pending approval queue.',
   },
   ACCOUNTS: {
     heading: 'Processing dashboard',
@@ -43,6 +46,9 @@ const ROLE_ICON: Record<UserRole, typeof InboxIcon> = {
 
 export function DashboardPage() {
   const session = useSession();
+  const pending = useVoucherList(
+    session.data?.role === 'DIRECTOR' ? 'PENDING_APPROVAL' : undefined,
+  );
   const user = session.data;
 
   if (!user) {
@@ -57,11 +63,49 @@ export function DashboardPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHeader
         title={`${content.heading}, ${firstName}`}
-        description={`${content.summary} · ${ROLE_LABELS[user.role]}${
+        description={`${content.summary} — ${ROLE_LABELS[user.role]}${
           user.department ? ` · ${user.department}` : ''
         }`}
       />
-      <EmptyState icon={Icon} title={content.emptyTitle} description={content.emptyDescription} />
+
+      {user.role === 'DIRECTOR' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Pending approvals</CardTitle>
+            <CardDescription>Vouchers submitted and waiting for your decision.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4">
+            {pending.isPending ? (
+              <Skeleton className="h-9 w-16" />
+            ) : pending.isError ? (
+              <p className="text-sm text-muted-foreground">Could not load the queue.</p>
+            ) : (
+              <p className="text-3xl font-semibold tabular-nums">{pending.data.total}</p>
+            )}
+            <div className="flex items-center gap-2">
+              <Button asChild>
+                <Link to="/approvals">Open queue</Link>
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/vouchers">All vouchers</Link>
+              </Button>
+            </div>
+          </CardContent>
+          {pending.isFetching && !pending.isPending ? (
+            <p className="flex items-center gap-2 px-6 pb-4 text-xs text-muted-foreground">
+              <Loader2Icon className="size-3 animate-spin" aria-hidden /> Refreshing…
+            </p>
+          ) : null}
+        </Card>
+      ) : (
+        <EmptyState icon={Icon} title={content.emptyTitle} description={content.emptyDescription}>
+          {user.role === 'EMPLOYEE' ? (
+            <Button asChild>
+              <Link to="/vouchers">Go to my vouchers</Link>
+            </Button>
+          ) : null}
+        </EmptyState>
+      )}
     </div>
   );
 }

@@ -608,3 +608,220 @@ describe('GET /api/v1/vouchers/:id/events', () => {
     expect(anonymous.status).toBe(401);
   });
 });
+
+describe('POST /api/v1/vouchers/:id/approve (director)', () => {
+  async function createPendingVoucher(cookie: string): Promise<string> {
+    const created = await createDraft(cookie);
+    const id = created.body.data.id as string;
+    await request(app)
+      .post(`/api/v1/vouchers/${id}/signature/employee`)
+      .set('Cookie', cookie)
+      .attach('file', PNG_SIGNATURE, 'signature.png');
+    const submitted = await request(app)
+      .post(`/api/v1/vouchers/${id}/submit`)
+      .set('Cookie', cookie);
+    expect(submitted.status).toBe(200);
+    return id;
+  }
+
+  it('approves with a multipart signature, stores it, and records APPROVED atomically', async () => {
+    const id = await createPendingVoucher(emp1Cookie);
+
+    const res = await request(app)
+      .post(`/api/v1/vouchers/${id}/approve`)
+      .set('Cookie', directorCookie)
+      .attach('file', PNG_SIGNATURE, 'director-sign.png');
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('APPROVED');
+    expect(res.body.data.approvedAt).not.toBeNull();
+    expect(res.body.data.hasDirectorSignature).toBe(true);
+
+    const stream = await request(app)
+      .get(`/api/v1/vouchers/${id}/signatures/director`)
+      .set('Cookie', directorCookie)
+      .responseType('blob');
+    expect(stream.status).toBe(200);
+    expect(stream.headers['content-type']).toBe('image/png');
+
+    const events = await prisma.voucherEvent.findMany({
+      where: { voucherId: id, eventType: 'APPROVED' },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.fromStatus).toBe('PENDING_APPROVAL');
+    expect(events[0]?.toStatus).toBe('APPROVED');
+    expect(events[0]?.actorId).toBeTruthy();
+  });
+
+  it('rejects missing/invalid signature files and non-director callers', async () => {
+    const id = await createPendingVoucher(emp1Cookie);
+
+    const noFile = await request(app)
+      .post(`/api/v1/vouchers/${id}/approve`)
+      .set('Cookie', directorCookie);
+    expect(noFile.status).toBe(400);
+
+    const fake = await request(app)
+      .post(`/api/v1/vouchers/${id}/approve`)
+      .set('Cookie', directorCookie)
+      .attach('file', Buffer.from('definitely not an image'), 'fake.png');
+    expect(fake.status).toBe(415);
+    expect(fake.body.error.code).toBe('UNSUPPORTED_FILE_TYPE');
+
+    const asEmployee = await request(app)
+      .post(`/api/v1/vouchers/${id}/approve`)
+      .set('Cookie', emp1Cookie)
+      .attach('file', PNG_SIGNATURE, 'sig.png');
+    expect(asEmployee.status).toBe(403);
+
+    const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id } });
+    expect(voucher.status).toBe('PENDING_APPROVAL');
+    expect(voucher.directorSignatureFileId).toBeNull();
+  });
+
+  it('rejects approval of non-pending vouchers with 409', async () => {
+    const id = await createPendingVoucher(emp1Cookie);
+    await prisma.voucher.update({ where: { id }, data: { status: 'DRAFT' } });
+
+    const res = await request(app)
+      .post(`/api/v1/vouchers/${id}/approve`)
+      .set('Cookie', directorCookie)
+      .attach('file', PNG_SIGNATURE, 'sig.png');
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('INVALID_VOUCHER_STATE');
+  });
+
+  it('lets exactly one of several concurrent decisions win', async () => {
+    const id = await createPendingVoucher(emp1Cookie);
+
+    const results = await Promise.all([
+      request(app)
+        .post(`/api/v1/vouchers/${id}/approve`)
+        .set('Cookie', directorCookie)
+        .attach('file', PNG_SIGNATURE, 'sig.png'),
+      request(app)
+        .post(`/api/v1/vouchers/${id}/reject`)
+        .set('Cookie', directorCookie)
+        .send({ reason: 'Concurrent reject' }),
+      request(app)
+        .post(`/api/v1/vouchers/${id}/approve`)
+        .set('Cookie', directorCookie)
+        .attach('file', PNG_SIGNATURE, 'sig.png'),
+    ]);
+
+    const ok = results.filter((r) => r.status === 200);
+    const conflicts = results.filter((r) => r.status === 409);
+    expect(ok).toHaveLength(1);
+    expect(conflicts).toHaveLength(2);
+
+    const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id } });
+    const decisionEvents = await prisma.voucherEvent.count({
+      where: { voucherId: id, eventType: { in: ['APPROVED', 'REJECTED'] } },
+    });
+    expect(decisionEvents).toBe(1);
+    if (ok[0]?.body.data.status === 'APPROVED') {
+      expect(voucher.status).toBe('APPROVED');
+      expect(voucher.directorSignatureFileId).not.toBeNull();
+    } else {
+      expect(voucher.status).toBe('REJECTED');
+      expect(voucher.rejectionReason).toBe('Concurrent reject');
+    }
+  });
+});
+
+describe('POST /api/v1/vouchers/:id/reject (director)', () => {
+  async function createPendingVoucher(cookie: string): Promise<string> {
+    const created = await createDraft(cookie);
+    const id = created.body.data.id as string;
+    await request(app)
+      .post(`/api/v1/vouchers/${id}/signature/employee`)
+      .set('Cookie', cookie)
+      .attach('file', PNG_SIGNATURE, 'signature.png');
+    const submitted = await request(app)
+      .post(`/api/v1/vouchers/${id}/submit`)
+      .set('Cookie', cookie);
+    expect(submitted.status).toBe(200);
+    return id;
+  }
+
+  it('rejects with a reason and records REJECTED with the reason', async () => {
+    const id = await createPendingVoucher(emp1Cookie);
+
+    const res = await request(app)
+      .post(`/api/v1/vouchers/${id}/reject`)
+      .set('Cookie', directorCookie)
+      .send({ reason: 'Out of policy: missing original bills' });
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('REJECTED');
+    expect(res.body.data.rejectionReason).toBe('Out of policy: missing original bills');
+
+    const event = await prisma.voucherEvent.findFirst({
+      where: { voucherId: id, eventType: 'REJECTED' },
+    });
+    expect(event?.reason).toBe('Out of policy: missing original bills');
+
+    // Employee can see the rejection reason (VCH-05 visibility).
+    const detail = await request(app).get(`/api/v1/vouchers/${id}`).set('Cookie', emp1Cookie);
+    expect(detail.status).toBe(200);
+    expect(detail.body.data.rejectionReason).toBe('Out of policy: missing original bills');
+  });
+
+  it('requires a non-empty reason (400 REJECTION_REASON_REQUIRED)', async () => {
+    const id = await createPendingVoucher(emp1Cookie);
+
+    const blank = await request(app)
+      .post(`/api/v1/vouchers/${id}/reject`)
+      .set('Cookie', directorCookie)
+      .send({ reason: '   ' });
+    expect(blank.status).toBe(400);
+    expect(blank.body.error.code).toBe('REJECTION_REASON_REQUIRED');
+
+    const missing = await request(app)
+      .post(`/api/v1/vouchers/${id}/reject`)
+      .set('Cookie', directorCookie)
+      .send({});
+    expect(missing.status).toBe(400);
+
+    const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id } });
+    expect(voucher.status).toBe('PENDING_APPROVAL');
+  });
+
+  it('enforces role and state rules', async () => {
+    const id = await createPendingVoucher(emp1Cookie);
+
+    const asEmployee = await request(app)
+      .post(`/api/v1/vouchers/${id}/reject`)
+      .set('Cookie', emp1Cookie)
+      .send({ reason: 'nope' });
+    expect(asEmployee.status).toBe(403);
+
+    await prisma.voucher.update({ where: { id }, data: { status: 'APPROVED' } });
+    const stale = await request(app)
+      .post(`/api/v1/vouchers/${id}/reject`)
+      .set('Cookie', directorCookie)
+      .send({ reason: 'too late' });
+    expect(stale.status).toBe(409);
+    expect(stale.body.error.code).toBe('INVALID_VOUCHER_STATE');
+  });
+});
+
+describe('Director cannot edit employee expense details', () => {
+  it('denies PATCH and DELETE on any voucher with 403', async () => {
+    const created = await createDraft(emp1Cookie);
+    const id = created.body.data.id as string;
+
+    const patch = await request(app)
+      .patch(`/api/v1/vouchers/${id}`)
+      .set('Cookie', directorCookie)
+      .send({ amount: '9999.00' });
+    expect(patch.status).toBe(403);
+
+    const remove = await request(app)
+      .delete(`/api/v1/vouchers/${id}`)
+      .set('Cookie', directorCookie);
+    expect(remove.status).toBe(403);
+
+    const voucher = await prisma.voucher.findUniqueOrThrow({ where: { id } });
+    expect(voucher.amount.toFixed(2)).toBe('1500.50');
+    expect(voucher.status).toBe('DRAFT');
+  });
+});

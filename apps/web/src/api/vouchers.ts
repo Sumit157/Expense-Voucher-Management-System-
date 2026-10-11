@@ -1,16 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, apiRequest, apiUpload } from '@/api/client';
-import type { Voucher, VoucherDraftInput, VoucherEvent, VoucherList } from '@/api/types';
+import type {
+  Voucher,
+  VoucherDraftInput,
+  VoucherEvent,
+  VoucherList,
+  VoucherStatus,
+} from '@/api/types';
 
 export const VOUCHERS_QUERY_KEY = ['vouchers'] as const;
 export const voucherQueryKey = (id: string) => ['vouchers', 'detail', id] as const;
 const voucherListQueryKey = ['vouchers', 'list'] as const;
+const voucherListStatusKey = (status: VoucherStatus | undefined) =>
+  ['vouchers', 'list', status ?? 'ALL'] as const;
 const voucherEventsQueryKey = (id: string) => ['vouchers', 'events', id] as const;
 
-export function useVoucherList() {
+export function useVoucherList(status?: VoucherStatus) {
   return useQuery<VoucherList>({
-    queryKey: voucherListQueryKey,
-    queryFn: () => apiRequest<VoucherList>('/vouchers'),
+    queryKey: voucherListStatusKey(status),
+    queryFn: () => apiRequest<VoucherList>(status ? `/vouchers?status=${status}` : '/vouchers'),
   });
 }
 
@@ -77,6 +85,35 @@ export function useSubmitVoucher() {
       void queryClient.invalidateQueries({ queryKey: voucherListQueryKey });
       queryClient.setQueryData(voucherQueryKey(voucher.id), voucher);
       // The SUBMITTED event lands in the same server transaction.
+      void queryClient.invalidateQueries({ queryKey: voucherEventsQueryKey(voucher.id) });
+    },
+  });
+}
+
+export function useApproveVoucher() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, file }: { id: string; file: File }) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return apiUpload<Voucher>(`/vouchers/${id}/approve`, formData);
+    },
+    onSuccess: (voucher) => {
+      void queryClient.invalidateQueries({ queryKey: voucherListQueryKey });
+      queryClient.setQueryData(voucherQueryKey(voucher.id), voucher);
+      void queryClient.invalidateQueries({ queryKey: voucherEventsQueryKey(voucher.id) });
+    },
+  });
+}
+
+export function useRejectVoucher() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      apiRequest<Voucher>(`/vouchers/${id}/reject`, { method: 'POST', body: { reason } }),
+    onSuccess: (voucher) => {
+      void queryClient.invalidateQueries({ queryKey: voucherListQueryKey });
+      queryClient.setQueryData(voucherQueryKey(voucher.id), voucher);
       void queryClient.invalidateQueries({ queryKey: voucherEventsQueryKey(voucher.id) });
     },
   });

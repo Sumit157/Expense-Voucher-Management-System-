@@ -1,12 +1,30 @@
 import { AlertCircleIcon, Loader2Icon, PlusIcon, ReceiptTextIcon } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useVoucherList } from '@/api/vouchers';
+import type { VoucherStatus } from '@/api/types';
+import { useSession } from '@/auth/use-auth';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+
+const STATUS_OPTIONS: readonly (VoucherStatus | undefined)[] = [
+  undefined,
+  'DRAFT',
+  'PENDING_APPROVAL',
+  'APPROVED',
+  'REJECTED',
+];
+
+const STATUS_LABELS: Record<string, string> = {
+  ALL: 'All statuses',
+  DRAFT: 'Draft',
+  PENDING_APPROVAL: 'Pending approval',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
 
 function formatCurrency(amount: string): string {
   const value = Number(amount);
@@ -16,12 +34,34 @@ function formatCurrency(amount: string): string {
 }
 
 export function VoucherListPage() {
-  const list = useVoucherList();
+  const session = useSession();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isEmployee = session.data?.role === 'EMPLOYEE';
+  const rawStatus = searchParams.get('status');
+  const status =
+    rawStatus === 'DRAFT' ||
+    rawStatus === 'PENDING_APPROVAL' ||
+    rawStatus === 'APPROVED' ||
+    rawStatus === 'REJECTED'
+      ? rawStatus
+      : undefined;
+  const list = useVoucherList(status);
+  const title = isEmployee ? 'My Vouchers' : 'All Vouchers';
+
+  const onStatusChange = (value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value === 'ALL') {
+      next.delete('status');
+    } else {
+      next.set('status', value);
+    }
+    setSearchParams(next, { replace: true });
+  };
 
   if (list.isPending) {
     return (
       <div className="space-y-4">
-        <PageHeader title="My Vouchers" />
+        <PageHeader title={title} />
         <div className="space-y-2">
           {Array.from({ length: 3 }, (_, i) => (
             <Skeleton key={i} className="h-14 w-full" />
@@ -34,13 +74,13 @@ export function VoucherListPage() {
   if (list.isError) {
     return (
       <div className="space-y-4">
-        <PageHeader title="My Vouchers" />
+        <PageHeader title={title} />
         <p
           role="alert"
           className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
         >
-          <AlertCircleIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-          Could not load your vouchers.
+          <AlertCircleIcon className="mt-0.5 size-4" aria-hidden />
+          Could not load vouchers.
         </p>
         <Button variant="outline" onClick={() => void list.refetch()}>
           Try again
@@ -54,28 +94,55 @@ export function VoucherListPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="My Vouchers"
-        description={total > 0 ? `${total} voucher${total === 1 ? '' : 's'} in total` : undefined}
+        title={title}
+        description={total > 0 ? `${total} voucher${total === 1 ? '' : 's'}` : undefined}
         actions={
-          <Button asChild>
-            <Link to="/vouchers/new">
-              <PlusIcon aria-hidden /> New voucher
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="sr-only sm:not-sr-only">Status</span>
+              <select
+                value={status ?? 'ALL'}
+                onChange={(event) => onStatusChange(event.target.value)}
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+                aria-label="Filter by status"
+              >
+                {STATUS_OPTIONS.map((option) => (
+                  <option key={option ?? 'ALL'} value={option ?? 'ALL'}>
+                    {STATUS_LABELS[option ?? 'ALL']}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {isEmployee ? (
+              <Button asChild>
+                <Link to="/vouchers/new">
+                  <PlusIcon aria-hidden /> New voucher
+                </Link>
+              </Button>
+            ) : null}
+          </div>
         }
       />
 
       {items.length === 0 ? (
         <EmptyState
           icon={ReceiptTextIcon}
-          title="No vouchers yet"
-          description="Create your first expense draft — you can edit or delete it until you submit it for approval."
+          title={status ? 'No vouchers match this filter' : 'No vouchers yet'}
+          description={
+            status
+              ? 'Try a different status filter.'
+              : isEmployee
+                ? 'Create your first expense draft — you can edit or delete it until you submit it for approval.'
+                : 'Vouchers appear here once employees create them.'
+          }
         >
-          <Button asChild>
-            <Link to="/vouchers/new">
-              <PlusIcon aria-hidden /> New voucher
-            </Link>
-          </Button>
+          {isEmployee && !status ? (
+            <Button asChild>
+              <Link to="/vouchers/new">
+                <PlusIcon aria-hidden /> New voucher
+              </Link>
+            </Button>
+          ) : null}
         </EmptyState>
       ) : (
         <Card>

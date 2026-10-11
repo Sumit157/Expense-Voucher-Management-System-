@@ -57,6 +57,7 @@ export interface VoucherDto {
   amount: string;
   status: VoucherStatus;
   hasEmployeeSignature: boolean;
+  hasDirectorSignature: boolean;
   approvedAt: string | null;
   rejectionReason: string | null;
   employee: EmployeeRef | null;
@@ -107,6 +108,7 @@ export function toVoucherDto(voucher: VoucherWithEmployee): VoucherDto {
     amount: voucher.amount.toFixed(2),
     status: voucher.status,
     hasEmployeeSignature: voucher.employeeSignatureFileId !== null,
+    hasDirectorSignature: voucher.directorSignatureFileId !== null,
     approvedAt: voucher.approvedAt?.toISOString() ?? null,
     rejectionReason: voucher.rejectionReason,
     employee: voucher.employee,
@@ -179,6 +181,22 @@ async function recordEvent(
   });
 }
 
+/** D-008: size cap + magic-byte sniffing for signature uploads. */
+function validateSignatureFile(buffer: Buffer, maxBytes: number): string {
+  if (buffer.length === 0 || buffer.length > maxBytes) {
+    throw new VoucherError(413, 'FILE_TOO_LARGE', 'Signature image exceeds the size limit');
+  }
+  const mimeType = sniffImageMime(buffer);
+  if (!mimeType) {
+    throw new VoucherError(
+      415,
+      'UNSUPPORTED_FILE_TYPE',
+      'Signature must be a PNG, JPEG or WebP image',
+    );
+  }
+  return mimeType;
+}
+
 export interface VoucherServiceDeps {
   prisma: PrismaClient;
   storage: SignatureStorage;
@@ -209,6 +227,13 @@ export interface VoucherService {
   updateDraft(actor: Actor, id: string, patch: Partial<DraftInput>): Promise<VoucherDto>;
   deleteDraft(actor: Actor, id: string): Promise<void>;
   submitVoucher(actor: Actor, id: string): Promise<VoucherDto>;
+  approveVoucher(
+    actor: Actor,
+    id: string,
+    file: { buffer: Buffer; originalName: string },
+    maxBytes: number,
+  ): Promise<VoucherDto>;
+  rejectVoucher(actor: Actor, id: string, reason: string): Promise<VoucherDto>;
   listVoucherEvents(actor: Actor, id: string): Promise<VoucherEventDto[]>;
   attachEmployeeSignature(
     actor: Actor,
@@ -217,6 +242,7 @@ export interface VoucherService {
     maxBytes: number,
   ): Promise<VoucherDto>;
   readEmployeeSignature(actor: Actor, id: string): Promise<{ buffer: Buffer; mimeType: string }>;
+  readDirectorSignature(actor: Actor, id: string): Promise<{ buffer: Buffer; mimeType: string }>;
 }
 
 export function createVoucherService(deps: VoucherServiceDeps): VoucherService {
@@ -480,20 +506,120 @@ export function createVoucherService(deps: VoucherServiceDeps): VoucherService {
       }));
     },
 
+    async approveVoucher(actor, id, file, maxBytes) {
+      if (actor.role !== 'DIRECTOR') {
+        throw new VoucherError(403, 'FORBIDDEN', 'Only the director can approve vouchers');
+      }
+      const voucher = await loadForActor(prisma, actor, id);
+      if (voucher.status !== 'PENDING_APPROVAL') {
+        throw new VoucherError(
+          409,
+          'INVALID_VOUCHER_STATE',
+          'Only pending vouchers can be approved',
+        );
+      }
+      const mimeType = validateSignatureFile(file.buffer, maxBytes);
+
+      // D-017: signature validation and the state transition in one request.
+      // Bytes first so a crash leaves an orphan file, never a dangling ref.
+      const saved = await storage.save(file.buffer, mimeType);
+      try {
+        await withTransactionRetry(prisma, async (tx) => {
+          const fileRow = await tx.storedFile.create({
+            data: {
+              storageKey: saved.storageKey,
+              originalName: file.originalName.slice(0, 255),
+              mimeType,
+              sizeBytes: file.buffer.length,
+              sha256: saved.sha256,
+              uploadedById: actor.id,
+            },
+          });
+          // Conditional write: a concurrent approve/reject loses the race.
+          const result = await tx.voucher.updateMany({
+            where: { id, status: 'PENDING_APPROVAL', deletedAt: null },
+            data: {
+              status: 'APPROVED',
+              approvedAt: new Date(),
+              directorSignatureFileId: fileRow.id,
+            },
+          });
+          if (result.count === 0) {
+            throw new VoucherError(
+              409,
+              'INVALID_VOUCHER_STATE',
+              'Only pending vouchers can be approved',
+            );
+          }
+          const updated = await tx.voucher.findUniqueOrThrow({
+            where: { id },
+            include: { employee: { select: EMPLOYEE_SELECT } },
+          });
+          await recordEvent(tx, {
+            voucherId: id,
+            actorId: actor.id,
+            eventType: 'APPROVED',
+            fromStatus: 'PENDING_APPROVAL',
+            toStatus: 'APPROVED',
+            metadata: { voucherNumber: updated.voucherNumber },
+          });
+        });
+      } catch (error) {
+        await storage.remove(saved.storageKey);
+        throw error;
+      }
+      return service.getVoucher(actor, id);
+    },
+
+    async rejectVoucher(actor, id, reason) {
+      if (actor.role !== 'DIRECTOR') {
+        throw new VoucherError(403, 'FORBIDDEN', 'Only the director can reject vouchers');
+      }
+      const voucher = await loadForActor(prisma, actor, id);
+      if (voucher.status !== 'PENDING_APPROVAL') {
+        throw new VoucherError(
+          409,
+          'INVALID_VOUCHER_STATE',
+          'Only pending vouchers can be rejected',
+        );
+      }
+      const trimmed = reason.trim();
+      if (!trimmed) {
+        throw new VoucherError(400, 'REJECTION_REASON_REQUIRED', 'A rejection reason is required');
+      }
+      return withTransactionRetry(prisma, async (tx) => {
+        const result = await tx.voucher.updateMany({
+          where: { id, status: 'PENDING_APPROVAL', deletedAt: null },
+          data: { status: 'REJECTED', rejectionReason: trimmed },
+        });
+        if (result.count === 0) {
+          throw new VoucherError(
+            409,
+            'INVALID_VOUCHER_STATE',
+            'Only pending vouchers can be rejected',
+          );
+        }
+        const updated = await tx.voucher.findUniqueOrThrow({
+          where: { id },
+          include: { employee: { select: EMPLOYEE_SELECT } },
+        });
+        await recordEvent(tx, {
+          voucherId: id,
+          actorId: actor.id,
+          eventType: 'REJECTED',
+          fromStatus: 'PENDING_APPROVAL',
+          toStatus: 'REJECTED',
+          reason: trimmed,
+          metadata: { voucherNumber: updated.voucherNumber },
+        });
+        return toVoucherDto(updated);
+      });
+    },
+
     async attachEmployeeSignature(actor, id, file, maxBytes) {
       await loadOwnedDraft(id, actor);
 
-      if (file.buffer.length === 0 || file.buffer.length > maxBytes) {
-        throw new VoucherError(413, 'FILE_TOO_LARGE', 'Signature image exceeds the size limit');
-      }
-      const mimeType = sniffImageMime(file.buffer);
-      if (!mimeType) {
-        throw new VoucherError(
-          415,
-          'UNSUPPORTED_FILE_TYPE',
-          'Signature must be a PNG, JPEG or WebP image',
-        );
-      }
+      const mimeType = validateSignatureFile(file.buffer, maxBytes);
 
       // Bytes first: a crash here leaves an orphan file, never a dangling
       // reference (the safe direction).
@@ -554,6 +680,24 @@ export function createVoucherService(deps: VoucherServiceDeps): VoucherService {
       }
       const fileRow = await prisma.storedFile.findUnique({
         where: { id: voucher.employeeSignatureFileId },
+      });
+      if (!fileRow) {
+        throw new VoucherError(404, 'NOT_FOUND', 'Signature not found');
+      }
+      const buffer = await storage.read(fileRow.storageKey);
+      if (!buffer) {
+        throw new VoucherError(404, 'NOT_FOUND', 'Signature not found');
+      }
+      return { buffer, mimeType: fileRow.mimeType };
+    },
+
+    async readDirectorSignature(actor, id) {
+      const voucher = await loadForActor(prisma, actor, id);
+      if (!voucher.directorSignatureFileId) {
+        throw new VoucherError(404, 'NOT_FOUND', 'Signature not found');
+      }
+      const fileRow = await prisma.storedFile.findUnique({
+        where: { id: voucher.directorSignatureFileId },
       });
       if (!fileRow) {
         throw new VoucherError(404, 'NOT_FOUND', 'Signature not found');
