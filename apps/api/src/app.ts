@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import cors from 'cors';
 import express, { type Express, type Router } from 'express';
 import helmet from 'helmet';
@@ -18,6 +20,8 @@ export interface AppDeps {
   authRouter?: Router;
   vouchersRouter?: Router;
   dashboardRouter?: Router;
+  /** Absolute path to the built web app (apps/web/dist). Served when present. */
+  webDistDir?: string;
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -65,6 +69,18 @@ export function createApp(deps: AppDeps): Express {
   }
   if (deps.dashboardRouter) {
     app.use('/api/v1/dashboard', deps.dashboardRouter);
+  }
+
+  // Serve the built web app when it exists (e.g. Docker / single-process
+  // production). In local dev the Vite server on :5173 is used instead.
+  if (deps.webDistDir && fs.existsSync(path.join(deps.webDistDir, 'index.html'))) {
+    app.use(express.static(deps.webDistDir, { index: false }));
+    const indexHtml = path.join(deps.webDistDir, 'index.html');
+    app.get(/^\/(?!api\/|healthz|readyz).*/, (_req, res, next) => {
+      res.sendFile(indexHtml, (err) => {
+        if (err) next();
+      });
+    });
   }
 
   app.use(notFoundHandler);

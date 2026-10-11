@@ -18,6 +18,28 @@ Digitise ABC Company's expense-voucher workflow so employees can create and subm
 - **Testing:** Vitest, React Testing Library, Supertest, Playwright
 - **Local development:** locally installed MySQL 8.0+ (Docker Compose optional as a fallback; see `DECISIONS.md` D-014)
 
+## Quick start with Docker
+
+One command builds the database, API, and web app and starts everything:
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:3000 and sign in with a seed user (password `SeedDevPassword123!` by default; see the table below). Schema migrations and the demo seed run automatically on first start. Data and uploaded signatures persist in named volumes (`evm-mysql-data`, `evm-uploads`).
+
+Useful variants:
+
+```bash
+docker compose up --build -d     # detached
+npm run docker                   # same as docker compose up --build
+docker compose down              # stop (keeps volumes)
+docker compose down -v           # stop and delete data volumes
+docker compose up mysql          # database only (host port 3307)
+```
+
+To run detached and inspect logs: `docker compose logs -f app`.
+
 ## Development
 
 Prerequisites: Node.js 20+, npm 11+, and MySQL 8.0+ (locally installed per `DECISIONS.md` D-014, or the optional Docker Compose fallback in `docker-compose.yml`).
@@ -44,7 +66,7 @@ npm run format                    # Prettier write
 
 Health endpoints (API): `GET /healthz` (liveness), `GET /readyz` (MySQL readiness via `SELECT 1`).
 
-Auth endpoints: `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`.
+Auth endpoints: `POST /api/v1/auth/login`, `POST /api/v1/auth/register`, `POST /api/v1/auth/forgot-password`, `POST /api/v1/auth/reset-password`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout`.
 
 The web app serves the sign-in page (`/login`), a responsive role-aware navigation shell (desktop rail, mobile sheet), and per-role dashboard shells (`/dashboard`) at `http://localhost:5173`.
 
@@ -59,7 +81,7 @@ Development seed users (`npm run db:seed`, password from `SEED_DEFAULT_PASSWORD`
 
 Integration tests run against a separate database named `expense_voucher_test` (override with `TEST_DATABASE_URL`); create it once locally and grant your DB user access, or let CI's MySQL service provide it.
 
-Optional database fallback (host port 3307, never clashes with local 3306): `docker compose up -d mysql`.
+The `mysql` service in `docker-compose.yml` can still be run standalone on host port 3307 as a local-database fallback: `docker compose up mysql`.
 
 ## Development conventions
 

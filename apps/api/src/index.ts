@@ -26,7 +26,16 @@ const voucherService = createVoucherService({ prisma, storage });
 const vouchersRouter = createVoucherRouter({ env, logger, prisma, service: voucherService });
 const dashboardService = createDashboardService({ prisma });
 const dashboardRouter = createDashboardRouter({ prisma, service: dashboardService });
-const app = createApp({ env, logger, db, authRouter, vouchersRouter, dashboardRouter });
+const webDistDir = path.join(repoRoot, 'apps', 'web', 'dist');
+const app = createApp({
+  env,
+  logger,
+  db,
+  authRouter,
+  vouchersRouter,
+  dashboardRouter,
+  webDistDir,
+});
 
 const server = app.listen(env.PORT, () => {
   logger.info({ port: env.PORT, origin: env.API_ORIGIN }, 'API listening');

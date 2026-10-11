@@ -1,19 +1,21 @@
-# OPTIONAL fallback only — the primary development database is the local
-# MySQL 8.0.41 service (MYSQL80) per DECISIONS.md D-014.
-# Uses host port 3307 so it never clashes with the local service on 3306.
-# Usage: docker compose up -d mysql
+# Full application stack: MySQL 8.4 + app (API + built web UI served together).
+# One command to build and run everything:
+#   docker compose up --build
+# App: http://localhost:3000 (seeded demo users, see README).
+#
+# For local development against the host MySQL service (MYSQL80), keep using
+# `npm run dev` — this file is the containerized deployment path.
+# The standalone database fallback is still available: docker compose up mysql
 services:
   mysql:
     image: mysql:8.4
     container_name: evm-mysql
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: expense_voucher
-      MYSQL_USER: evoucher
-      MYSQL_PASSWORD: change-me
-      MYSQL_ROOT_PASSWORD: change-root-me
-    ports:
-      - '3307:3306'
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-expense_voucher}
+      MYSQL_USER: ${MYSQL_USER:-evoucher}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-root-me}
     volumes:
       - evm-mysql-data:/var/lib/mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
@@ -21,7 +23,51 @@ services:
       test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1']
       interval: 5s
       timeout: 3s
-      retries: 20
+      retries: 30
+
+  app:
+    container_name: evm-app
+    restart: unless-stopped
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # Development-mode container so session cookies work over plain
+      # http://localhost and the seed script runs without an override.
+      # For a real production deploy set NODE_ENV=production, a strong
+      # SESSION_SECRET, and serve over HTTPS (or terminate TLS at a reverse
+      # proxy and set TRUST_PROXY=1).
+      NODE_ENV: development
+      PORT: '3000'
+      DATABASE_URL: mysql://${MYSQL_USER:-evoucher}:${MYSQL_PASSWORD:-change-me}@mysql:3306/${MYSQL_DATABASE:-expense_voucher}
+      APP_ORIGIN: http://localhost:${APP_PORT:-3000}
+      API_ORIGIN: http://localhost:${APP_PORT:-3000}
+      SESSION_SECRET: ${SESSION_SECRET:-change-me-to-a-long-random-string-min-32-chars}
+      SESSION_TTL_HOURS: '12'
+      UPLOAD_DIR: /data/uploads
+      APP_TZ: UTC
+      SEED_DEFAULT_PASSWORD: ${SEED_DEFAULT_PASSWORD:-SeedDevPassword123!}
+    volumes:
+      - evm-uploads:/data/uploads
+    ports:
+      - '${APP_PORT:-3000}:3000'
+    # Migrate schema, seed demo users, then start the API (which also serves
+    # the built web app from apps/web/dist).
+    command: sh -c 'npx prisma migrate deploy && npm run db:seed && node apps/api/dist/index.js'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
 
 volumes:
   evm-mysql-data:
+  evm-uploads:
