@@ -8,7 +8,19 @@ export function createLogger(env: Env): Logger {
     level: env.LOG_LEVEL,
     base: { service: 'api', env: env.NODE_ENV },
     redact: {
-      paths: ['req.headers.authorization', 'req.headers.cookie', 'password', '*.password'],
+      paths: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'req.headers["set-cookie"]',
+        'password',
+        '*.password',
+        'newPassword',
+        '*.newPassword',
+        'token',
+        '*.token',
+        'devResetToken',
+        '*.devResetToken',
+      ],
       censor: '[redacted]',
     },
   });

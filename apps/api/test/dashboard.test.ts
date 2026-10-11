@@ -90,21 +90,21 @@ beforeAll(async () => {
   const passwordHash = await hashPassword(PASSWORD);
 
   // Self-heal: wipe any rows left behind by a crashed earlier run of this
-  // suite so the organisation-wide totals below stay deterministic.
+  // suite OR by other suites (org-wide totals are sensitive to any voucher
+  // in the DB, not just this suite's users).
+  const priorVouchers = await prisma.voucher.findMany({ select: { id: true } });
+  const priorVoucherIds = priorVouchers.map((v) => v.id);
+  if (priorVoucherIds.length > 0) {
+    await prisma.voucherEvent.deleteMany({ where: { voucherId: { in: priorVoucherIds } } });
+    await prisma.voucher.deleteMany({ where: { id: { in: priorVoucherIds } } });
+  }
+  await prisma.storedFile.deleteMany({});
   const priorUsers = await prisma.user.findMany({
     where: { email: { in: [ACCOUNTS, EMP1, EMP2, DIRECTOR] } },
     select: { id: true },
   });
   const priorIds = priorUsers.map((u) => u.id);
   if (priorIds.length > 0) {
-    const priorVouchers = await prisma.voucher.findMany({
-      where: { employeeId: { in: priorIds } },
-      select: { id: true },
-    });
-    const priorVoucherIds = priorVouchers.map((v) => v.id);
-    await prisma.voucherEvent.deleteMany({ where: { voucherId: { in: priorVoucherIds } } });
-    await prisma.voucher.deleteMany({ where: { id: { in: priorVoucherIds } } });
-    await prisma.storedFile.deleteMany({ where: { uploadedById: { in: priorIds } } });
     await prisma.session.deleteMany({ where: { userId: { in: priorIds } } });
     await prisma.user.deleteMany({ where: { id: { in: priorIds } } });
   }

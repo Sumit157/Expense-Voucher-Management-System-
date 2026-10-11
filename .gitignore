@@ -18,6 +18,8 @@ uploads/
 
 # Test/coverage
 coverage/
+apps/web/test-results/
+apps/web/playwright-report/
 
 # Logs
 *.log

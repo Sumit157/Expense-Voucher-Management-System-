@@ -28,7 +28,10 @@ interface ApiResponse {
   error?: { code: string; message: string };
 }
 
-export function createTestApp(prisma: PrismaClient): Express {
+export function createTestApp(
+  prisma: PrismaClient,
+  envOverrides: Record<string, string> = {},
+): Express {
   const env = loadEnv({
     NODE_ENV: 'test',
     PORT: '3000',
@@ -39,6 +42,7 @@ export function createTestApp(prisma: PrismaClient): Express {
     SESSION_SECRET: 'test-secret-value-32-characters-min!',
     SESSION_TTL_HOURS: '12',
     UPLOAD_DIR: testUploadDir,
+    ...envOverrides,
   });
   const logger = pino({ level: 'silent' });
   const authRouter = createAuthRouter({ env, logger, prisma });
