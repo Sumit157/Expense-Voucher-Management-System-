@@ -16,6 +16,7 @@ export interface AppDeps {
   db: Database;
   authRouter?: Router;
   vouchersRouter?: Router;
+  dashboardRouter?: Router;
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -45,6 +46,9 @@ export function createApp(deps: AppDeps): Express {
   }
   if (deps.vouchersRouter) {
     app.use('/api/v1/vouchers', deps.vouchersRouter);
+  }
+  if (deps.dashboardRouter) {
+    app.use('/api/v1/dashboard', deps.dashboardRouter);
   }
 
   app.use(notFoundHandler);

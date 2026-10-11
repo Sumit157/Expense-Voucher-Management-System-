@@ -74,7 +74,7 @@ type VoucherWithEmployee = Voucher & {
   } | null;
 };
 
-const EMPLOYEE_SELECT = {
+export const EMPLOYEE_SELECT = {
   id: true,
   fullName: true,
   employeeCode: true,

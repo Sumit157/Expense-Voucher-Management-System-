@@ -37,6 +37,7 @@ export function VoucherListPage() {
   const session = useSession();
   const [searchParams, setSearchParams] = useSearchParams();
   const isEmployee = session.data?.role === 'EMPLOYEE';
+  const isAccounts = session.data?.role === 'ACCOUNTS';
   const rawStatus = searchParams.get('status');
   const status =
     rawStatus === 'DRAFT' ||
@@ -45,16 +46,19 @@ export function VoucherListPage() {
     rawStatus === 'REJECTED'
       ? rawStatus
       : undefined;
-  const list = useVoucherList(status);
+  // Approved-voucher focus (Phase 7): Accounts lands on the approved view
+  // unless they explicitly pick another filter — including "All statuses".
+  const effectiveStatus = searchParams.has('status')
+    ? status
+    : isAccounts
+      ? 'APPROVED'
+      : undefined;
+  const list = useVoucherList(effectiveStatus);
   const title = isEmployee ? 'My Vouchers' : 'All Vouchers';
 
   const onStatusChange = (value: string) => {
     const next = new URLSearchParams(searchParams);
-    if (value === 'ALL') {
-      next.delete('status');
-    } else {
-      next.set('status', value);
-    }
+    next.set('status', value);
     setSearchParams(next, { replace: true });
   };
 
@@ -101,7 +105,7 @@ export function VoucherListPage() {
             <label className="flex items-center gap-2 text-sm">
               <span className="sr-only sm:not-sr-only">Status</span>
               <select
-                value={status ?? 'ALL'}
+                value={effectiveStatus ?? 'ALL'}
                 onChange={(event) => onStatusChange(event.target.value)}
                 className="h-9 rounded-md border bg-background px-2 text-sm"
                 aria-label="Filter by status"
@@ -127,16 +131,16 @@ export function VoucherListPage() {
       {items.length === 0 ? (
         <EmptyState
           icon={ReceiptTextIcon}
-          title={status ? 'No vouchers match this filter' : 'No vouchers yet'}
+          title={effectiveStatus ? 'No vouchers match this filter' : 'No vouchers yet'}
           description={
-            status
+            effectiveStatus
               ? 'Try a different status filter.'
               : isEmployee
                 ? 'Create your first expense draft — you can edit or delete it until you submit it for approval.'
                 : 'Vouchers appear here once employees create them.'
           }
         >
-          {isEmployee && !status ? (
+          {isEmployee && !effectiveStatus ? (
             <Button asChild>
               <Link to="/vouchers/new">
                 <PlusIcon aria-hidden /> New voucher

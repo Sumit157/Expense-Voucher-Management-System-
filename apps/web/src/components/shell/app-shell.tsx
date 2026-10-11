@@ -58,7 +58,7 @@ export function AppShellLayout() {
 
   return (
     <div className="flex min-h-dvh w-full bg-background">
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex print:hidden">
         <div className="flex h-14 items-center border-b border-sidebar-border px-4">
           <Brand />
         </div>
@@ -70,7 +70,7 @@ export function AppShellLayout() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur print:hidden">
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger asChild>
               <Button
@@ -110,7 +110,7 @@ export function AppShellLayout() {
           </span>
         </header>
 
-        <main className="flex-1 p-4 md:p-6 lg:p-8">
+        <main className="flex-1 p-4 md:p-6 lg:p-8 print:p-0">
           <Outlet />
         </main>
       </div>

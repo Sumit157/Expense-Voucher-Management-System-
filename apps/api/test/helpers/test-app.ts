@@ -9,6 +9,8 @@ import { loadEnv } from '../../src/env.js';
 import type { Database } from '../../src/db.js';
 import { createAuthRouter } from '../../src/modules/auth/auth-router.js';
 import type { AuthUser } from '../../src/modules/auth/auth-service.js';
+import { createDashboardRouter } from '../../src/modules/dashboard/dashboard-router.js';
+import { createDashboardService } from '../../src/modules/dashboard/dashboard-service.js';
 import { createSignatureStorage } from '../../src/modules/vouchers/signature-storage.js';
 import { createVoucherService } from '../../src/modules/vouchers/voucher-service.js';
 import { createVoucherRouter } from '../../src/modules/vouchers/voucher-router.js';
@@ -43,7 +45,9 @@ export function createTestApp(prisma: PrismaClient): Express {
   const storage = createSignatureStorage(testUploadDir);
   const voucherService = createVoucherService({ prisma, storage });
   const vouchersRouter = createVoucherRouter({ env, logger, prisma, service: voucherService });
-  return createApp({ env, logger, db: noOpDb, authRouter, vouchersRouter });
+  const dashboardService = createDashboardService({ prisma });
+  const dashboardRouter = createDashboardRouter({ prisma, service: dashboardService });
+  return createApp({ env, logger, db: noOpDb, authRouter, vouchersRouter, dashboardRouter });
 }
 
 export async function login(

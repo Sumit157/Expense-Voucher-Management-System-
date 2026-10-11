@@ -1,10 +1,18 @@
-import { FilePenLineIcon, InboxIcon, Loader2Icon, WalletIcon } from 'lucide-react';
+import {
+  AlertCircleIcon,
+  FilePenLineIcon,
+  InboxIcon,
+  Loader2Icon,
+  WalletIcon,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { UserRole } from '@/api/types';
+import { useAccountsDashboard } from '@/api/dashboard';
 import { useVoucherList } from '@/api/vouchers';
 import { useSession } from '@/auth/use-auth';
 import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
+import { StatusBadge } from '@/components/shared/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,10 +39,10 @@ const ROLE_CONTENT: Record<UserRole, RoleContent> = {
     emptyDescription: 'Submitted vouchers appear in your pending approval queue.',
   },
   ACCOUNTS: {
-    heading: 'Processing dashboard',
-    summary: 'Verify, schedule, and mark expense vouchers as paid.',
-    emptyTitle: 'Nothing to process yet',
-    emptyDescription: 'The accounts payment registry and processing workflow arrive in Phase 7.',
+    heading: 'Accounts dashboard',
+    summary: 'Review organisation-wide vouchers and approved expenses.',
+    emptyTitle: 'No vouchers yet',
+    emptyDescription: 'Vouchers appear here once employees create and submit them.',
   },
 };
 
@@ -43,6 +51,121 @@ const ROLE_ICON: Record<UserRole, typeof InboxIcon> = {
   DIRECTOR: InboxIcon,
   ACCOUNTS: WalletIcon,
 };
+
+const approvedDateFormatter = new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium' });
+
+function formatAmount(amount: string): string {
+  const value = Number(amount);
+  return Number.isFinite(value)
+    ? value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : amount;
+}
+
+function KpiCard({ label, value }: { label: string; value: string | number }) {
+  return (
+    <Card>
+      <CardContent className="px-4 py-4">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
+        <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AccountsDashboard() {
+  const summary = useAccountsDashboard();
+
+  if (summary.isPending) {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {Array.from({ length: 5 }, (_, i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  if (summary.isError || !summary.data) {
+    return (
+      <div className="space-y-4">
+        <p
+          role="alert"
+          className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertCircleIcon className="mt-0.5 size-4" aria-hidden />
+          Could not load the dashboard summary.
+        </p>
+        <Button variant="outline" onClick={() => void summary.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  const data = summary.data;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <KpiCard label="Total vouchers" value={data.total} />
+        <KpiCard label="Pending approval" value={data.pendingApproval} />
+        <KpiCard label="Approved" value={data.approved} />
+        <KpiCard label="Rejected" value={data.rejected} />
+        <KpiCard label="Approved amount" value={formatAmount(data.totalApprovedAmount)} />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">Recent approved vouchers</CardTitle>
+              <CardDescription>The latest vouchers cleared by the Director.</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/vouchers">All vouchers</Link>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {data.recentApproved.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No approved vouchers yet.</p>
+          ) : (
+            <ul className="divide-y">
+              {data.recentApproved.map((voucher) => (
+                <li
+                  key={voucher.id}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3 text-sm"
+                >
+                  <Link
+                    to={`/vouchers/${voucher.id}`}
+                    className="font-medium underline-offset-4 hover:underline"
+                  >
+                    {voucher.voucherNumber}
+                  </Link>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {voucher.employee?.fullName ?? '—'} · {voucher.expenseTitle}
+                  </span>
+                  <span className="tabular-nums">{formatAmount(voucher.amount)}</span>
+                  <span className="hidden text-muted-foreground tabular-nums sm:inline">
+                    {voucher.approvedAt
+                      ? approvedDateFormatter.format(new Date(voucher.approvedAt))
+                      : '—'}
+                  </span>
+                  <StatusBadge status={voucher.status} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 export function DashboardPage() {
   const session = useSession();
@@ -97,13 +220,13 @@ export function DashboardPage() {
             </p>
           ) : null}
         </Card>
+      ) : user.role === 'ACCOUNTS' ? (
+        <AccountsDashboard />
       ) : (
         <EmptyState icon={Icon} title={content.emptyTitle} description={content.emptyDescription}>
-          {user.role === 'EMPLOYEE' ? (
-            <Button asChild>
-              <Link to="/vouchers">Go to my vouchers</Link>
-            </Button>
-          ) : null}
+          <Button asChild>
+            <Link to="/vouchers">Go to my vouchers</Link>
+          </Button>
         </EmptyState>
       )}
     </div>

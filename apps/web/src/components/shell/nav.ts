@@ -40,7 +40,7 @@ const NAV_ITEMS: readonly NavItem[] = [
     to: '/vouchers',
     label: 'All Vouchers',
     icon: ReceiptTextIcon,
-    roles: ['DIRECTOR'],
+    roles: ['DIRECTOR', 'ACCOUNTS'],
   },
 ];
 

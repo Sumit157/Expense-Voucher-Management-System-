@@ -7,6 +7,8 @@ import { loadEnv } from './env.js';
 import { createLogger } from './logger.js';
 import { getPrisma } from './lib/prisma.js';
 import { createAuthRouter } from './modules/auth/auth-router.js';
+import { createDashboardRouter } from './modules/dashboard/dashboard-router.js';
+import { createDashboardService } from './modules/dashboard/dashboard-service.js';
 import { createSignatureStorage, resolveUploadDir } from './modules/vouchers/signature-storage.js';
 import { createVoucherService } from './modules/vouchers/voucher-service.js';
 import { createVoucherRouter } from './modules/vouchers/voucher-router.js';
@@ -22,7 +24,9 @@ const authRouter = createAuthRouter({ env, logger, prisma });
 const storage = createSignatureStorage(resolveUploadDir(repoRoot, env.UPLOAD_DIR));
 const voucherService = createVoucherService({ prisma, storage });
 const vouchersRouter = createVoucherRouter({ env, logger, prisma, service: voucherService });
-const app = createApp({ env, logger, db, authRouter, vouchersRouter });
+const dashboardService = createDashboardService({ prisma });
+const dashboardRouter = createDashboardRouter({ prisma, service: dashboardService });
+const app = createApp({ env, logger, db, authRouter, vouchersRouter, dashboardRouter });
 
 const server = app.listen(env.PORT, () => {
   logger.info({ port: env.PORT, origin: env.API_ORIGIN }, 'API listening');

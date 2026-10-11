@@ -51,6 +51,16 @@ export interface VoucherList {
   total: number;
 }
 
+/** Server DTO for GET /dashboard/accounts (mirrors AccountsDashboardDto). */
+export interface AccountsDashboard {
+  total: number;
+  pendingApproval: number;
+  approved: number;
+  rejected: number;
+  totalApprovedAmount: string;
+  recentApproved: Voucher[];
+}
+
 /** One entry of the append-only voucher timeline (GET /vouchers/:id/events). */
 export interface VoucherEvent {
   id: string;

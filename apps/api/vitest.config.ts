@@ -12,6 +12,10 @@ export default defineConfig({
     globalSetup: ['./test/global-setup.ts'],
     testTimeout: 30_000,
     hookTimeout: 120_000,
+    // All suites share one MySQL test database; run files one at a time so
+    // org-wide assertions (dashboard totals) and session/voucher fixtures
+    // cannot race each other across workers.
+    fileParallelism: false,
     env: {
       NODE_ENV: 'test',
       DATABASE_URL: resolveTestDatabaseUrl(),

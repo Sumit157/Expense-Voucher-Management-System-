@@ -8,6 +8,7 @@ import {
   FilePlusIcon,
   HistoryIcon,
   PenLineIcon,
+  PrinterIcon,
   ReceiptTextIcon,
   SendIcon,
   Trash2Icon,
@@ -115,6 +116,7 @@ export function VoucherDetailPage() {
   const canSubmit = canEdit && data.hasEmployeeSignature;
   const isDirector = session.data?.role === 'DIRECTOR';
   const canDecide = isDirector && data.status === 'PENDING_APPROVAL';
+  const canPrint = session.data?.role === 'DIRECTOR' || session.data?.role === 'ACCOUNTS';
 
   const onDelete = () => {
     deleteVoucher
@@ -239,6 +241,13 @@ export function VoucherDetailPage() {
         actions={
           <div className="flex items-center gap-2">
             <StatusBadge status={data.status} />
+            {canPrint ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/vouchers/${data.id}/print`}>
+                  <PrinterIcon aria-hidden /> Print
+                </Link>
+              </Button>
+            ) : null}
             {canEdit ? (
               confirmingSubmit ? (
                 <>

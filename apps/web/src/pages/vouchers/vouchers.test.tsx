@@ -16,6 +16,16 @@ const directorUser: AuthUser = {
   role: 'DIRECTOR',
 };
 
+const accountsUser: AuthUser = {
+  ...testUser,
+  id: 'user-acc',
+  email: 'acc@abc.test',
+  fullName: 'Avery Accounts',
+  employeeCode: null,
+  department: 'Finance',
+  role: 'ACCOUNTS',
+};
+
 const voucherFixture = {
   id: 'v1',
   voucherNumber: 'EV-2026-000042',
@@ -371,5 +381,71 @@ describe('voucher pages', () => {
     );
     expect(screen.getByText('Grace Employee')).toBeInTheDocument();
     expect(screen.getByText('Pending approval')).toBeInTheDocument();
+  });
+
+  it("defaults the accounts list to the approved-voucher filter", async () => {
+    mockApi({
+      user: accountsUser,
+      list: { items: [{ ...voucherFixture, status: 'APPROVED' }], total: 1 },
+    });
+    renderWithProviders(<AppRoutes />, { route: '/vouchers' });
+
+    expect(await screen.findByRole('link', { name: 'EV-2026-000042' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Filter by status')).toHaveValue('APPROVED');
+    const listCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes('/vouchers?status=APPROVED'),
+    );
+    expect(listCall).toBeDefined();
+  });
+
+  it('shows accounts a read-only detail with a print button and no decision controls', async () => {
+    mockApi({
+      user: accountsUser,
+      detail: {
+        ...voucherFixture,
+        status: 'APPROVED',
+        hasEmployeeSignature: true,
+        hasDirectorSignature: true,
+        approvedAt: '2026-10-05T10:00:00.000Z',
+      },
+    });
+    renderWithProviders(<AppRoutes />, { route: '/vouchers/v1' });
+
+    await screen.findByRole('heading', { level: 1, name: 'EV-2026-000042' });
+    expect(screen.getByRole('link', { name: /Print/ })).toHaveAttribute(
+      'href',
+      '/vouchers/v1/print',
+    );
+    expect(screen.queryByRole('button', { name: 'Approve voucher' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Edit/ })).not.toBeInTheDocument();
+    expect(screen.getByAltText('Employee signature')).toBeInTheDocument();
+    expect(screen.getByAltText('Director signature')).toBeInTheDocument();
+  });
+
+  it('renders the print document for accounts and blocks employees', async () => {
+    mockApi({
+      user: accountsUser,
+      detail: {
+        ...voucherFixture,
+        status: 'APPROVED',
+        hasEmployeeSignature: true,
+        hasDirectorSignature: true,
+        approvedAt: '2026-10-05T10:00:00.000Z',
+      },
+    });
+    const accountsView = renderWithProviders(<AppRoutes />, { route: '/vouchers/v1/print' });
+
+    expect(await screen.findByRole('heading', { name: 'EV-2026-000042' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Print/ })).toBeInTheDocument();
+    expect(screen.getByAltText('Employee signature')).toBeInTheDocument();
+    expect(screen.getByAltText('Director signature')).toBeInTheDocument();
+    expect(screen.getByText('Amount')).toBeInTheDocument();
+    accountsView.unmount();
+
+    mockApi();
+    renderWithProviders(<AppRoutes />, { route: '/vouchers/v1/print' });
+    expect(
+      await screen.findByText('Print view is for Directors and Accounts'),
+    ).toBeInTheDocument();
   });
 });
